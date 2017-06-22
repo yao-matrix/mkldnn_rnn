@@ -81,6 +81,22 @@ using mkldnn::rnn_forward;
 using mkldnn::rnn_backward;
 using mkldnn::primitive;
 
+#define OP_DATA_DUMP
+
+#ifdef OP_DATA_DUMP
+template <typename T>
+void dump_data(FILE *fp, const int size, T *data) {
+  LOG(ERROR) << "array size: " << size;
+
+  for (int i = 0; i < size; i++) {
+    if (i % 5 == 0) {
+      fprintf(fp, "\n");
+    }
+    fprintf(fp, "%f, ", ((float*)data)[i]);
+  }
+}
+#endif
+
 Status ParseRNNMode(const string& str, algorithm* rnn_mode) {
   if (str == "rnn_relu") {
     *rnn_mode = algorithm::rnn_relu;
@@ -546,6 +562,44 @@ class MkldnnRNNBackwardOp<CPUDevice, T> : public MkldnnRNNKernelCommon {
     Tensor* Tdweights = nullptr;
     OP_REQUIRES_OK(context, context->allocate_output(3, Tweights->shape(), &Tdweights));
 
+#ifdef OP_DATA_DUMP
+    {
+      FILE *fp = NULL;
+      char f_name[256] = "data_bwd_in.txt";
+      fp = fopen(f_name, "ab+");
+      fprintf(fp, "\n------------x----------\n");
+      dump_data(fp, Tx->NumElements(), Tx->flat<T>().data());
+
+      fprintf(fp, "\n------------hx----------\n");
+      dump_data(fp, Thx->NumElements(), Thx->flat<T>().data());
+
+      if (HasInputC()) {
+        fprintf(fp, "\n------------cx----------\n");
+        dump_data(fp, Tcx->NumElements(), Tcx->flat<T>().data());
+      }
+
+      fprintf(fp, "\n------------weights----------\n");
+      dump_data(fp, Tweights->NumElements(), Tweights->flat<T>().data());
+
+      fprintf(fp, "\n------------dy----------\n");
+      dump_data(fp, Tdy->NumElements(), Tdy->flat<T>().data());
+
+      fprintf(fp, "\n------------dhy----------\n");
+      dump_data(fp, Tdhy->NumElements(), Tdhy->flat<T>().data());
+
+      if (HasInputC()) {
+        fprintf(fp, "\n------------dcy----------\n");
+        dump_data(fp, Tdcy->NumElements(), Tdcy->flat<T>().data());
+      }
+
+      fprintf(fp, "\n------------workspace----------\n");
+      dump_data(fp, Tworkspace->NumElements(), Tworkspace->flat<T>().data());
+
+      fclose(fp);
+      fp = NULL;
+   }
+#endif
+
     memory *x;
     memory *hx;
     memory *cx;
@@ -580,16 +634,16 @@ class MkldnnRNNBackwardOp<CPUDevice, T> : public MkldnnRNNKernelCommon {
     y_desc = new memory::desc({model_shapes.seq_length, model_shapes.batch_size, model_shapes.num_units * model_shapes.dir_count}, a_data_type, memory::format::rnx);
     weights_desc = new memory::desc({total_w}, a_data_type, memory::format::x);
 
-    x = new memory({ *x_desc, *eng }, (void*)(Tx->template flat<T>().data()));
-    hx = new memory({ *hx_desc, *eng }, (void*)(Thx->template flat<T>().data()));
-    y = new memory({ *y_desc, *eng }, (void*)(Ty->template flat<T>().data()));
-    hy = new memory({ *hx_desc, *eng }, (void*)(Thy->template flat<T>().data()));
-    weights = new memory({ *weights_desc, *eng }, (void*)(Tweights->template flat<T>().data()));
-    dx = new memory({ *x_desc, *eng }, (void*)(Tdx->template flat<T>().data()));
-    dhx = new memory({ *hx_desc, *eng }, (void*)(Tdhx->template flat<T>().data()));
-    dy = new memory({ *y_desc, *eng }, (void*)(Tdy->template flat<T>().data()));
-    dhy = new memory({ *hx_desc, *eng }, (void*)(Tdhy->template flat<T>().data()));
-    dweights = new memory({ *weights_desc, *eng }, (void*)(Tdweights->template flat<T>().data()));
+    x = new memory({ *x_desc, *eng }, static_cast<void*>(const_cast<T*>(Tx->flat<T>().data())));
+    hx = new memory({ *hx_desc, *eng }, static_cast<void*>(const_cast<T*>(Thx->flat<T>().data())));
+    y = new memory({ *y_desc, *eng }, static_cast<void*>(const_cast<T*>(Ty->flat<T>().data())));
+    hy = new memory({ *hx_desc, *eng }, static_cast<void*>(const_cast<T*>(Thy->flat<T>().data())));
+    weights = new memory({ *weights_desc, *eng }, static_cast<void*>(const_cast<T*>(Tweights->flat<T>().data())));
+    dx = new memory({ *x_desc, *eng }, static_cast<void*>(const_cast<T*>(Tdx->flat<T>().data())));
+    dhx = new memory({ *hx_desc, *eng }, static_cast<void*>(const_cast<T*>(Tdhx->flat<T>().data())));
+    dy = new memory({ *y_desc, *eng }, static_cast<void*>(const_cast<T*>(Tdy->flat<T>().data())));
+    dhy = new memory({ *hx_desc, *eng }, static_cast<void*>(const_cast<T*>(Tdhy->flat<T>().data())));
+    dweights = new memory({ *weights_desc, *eng }, static_cast<void*>(const_cast<T*>(Tdweights->flat<T>().data())));
 
     auto rnn_fwd_desc = rnn_forward::desc(prop_kind::forward_training, 
                                           static_cast<mkldnn::algorithm>(rnn_mode()),
@@ -608,7 +662,7 @@ class MkldnnRNNBackwardOp<CPUDevice, T> : public MkldnnRNNKernelCommon {
     rnn_bwd_prim_desc = new rnn_backward::primitive_desc(rnn_bwd_desc, *eng, *rnn_fwd_prim_desc);
 
     auto workspace_primitive_desc  = rnn_fwd_prim_desc->workspace_primitive_desc();
-    workspace = new memory(workspace_primitive_desc, (void*)(Tworkspace->template flat<T>().data()));
+    workspace = new memory(workspace_primitive_desc, static_cast<void*>(const_cast<T*>(Tworkspace->flat<T>().data())));
     // LOG(ERROR) << "backward workspace size is: " << workspace_primitive_desc.get_size() / sizeof(T);
 
     std::vector<primitive> pipeline;
@@ -616,27 +670,81 @@ class MkldnnRNNBackwardOp<CPUDevice, T> : public MkldnnRNNKernelCommon {
 
     // TODO get workspace shape and creat output reserve space
     if (HasInputC()) {
-      cx = new memory({ *hx_desc, *eng }, (void*)(Tcx->template flat<T>().data()));
-      cy = new memory({ *hx_desc, *eng }, (void*)(Tcy->template flat<T>().data()));
-      dcx = new memory({ *hx_desc, *eng }, (void*)(Tdcx->template flat<T>().data()));
-      dcy = new memory({ *hx_desc, *eng }, (void*)(Tdcy->template flat<T>().data()));
+      cx = new memory({ *hx_desc, *eng }, static_cast<void*>(const_cast<T*>(Tcx->flat<T>().data())));
+      cy = new memory({ *hx_desc, *eng }, static_cast<void*>(const_cast<T*>(Tcy->flat<T>().data())));
+      dcx = new memory({ *hx_desc, *eng }, static_cast<void*>(const_cast<T*>(Tdcx->flat<T>().data())));
+      dcy = new memory({ *hx_desc, *eng }, static_cast<void*>(const_cast<T*>(Tdcy->flat<T>().data())));
 
       auto l = rnn_backward(*rnn_bwd_prim_desc, x, hx, cx,
                             dy, dhy, dcy, weights, workspace,
                             dx, dhx, dcx, dweights);
       pipeline.push_back(l);
       s.submit(pipeline).wait();
-
-      delete cx;
-      delete cy;
-      delete dcx;
-      delete dcy;
     } else {
       auto l = rnn_backward(*rnn_bwd_prim_desc, x, hx, nullptr,
                             dy, dhy, nullptr, weights, workspace,
                             dx, dhx, nullptr, dweights);
       pipeline.push_back(l);
       s.submit(pipeline).wait();
+    }
+
+#ifdef OP_DATA_DUMP
+    {
+      FILE *fp = NULL;
+      char f_name[256] = "data_bwd_out.txt";
+      fp = fopen(f_name, "ab+");
+      fprintf(fp, "\n------------x----------\n");
+      dump_data(fp, x->get_primitive_desc().get_size() / sizeof(T), (T*)x->get_data_handle());
+
+      fprintf(fp, "\n------------hx----------\n");
+      dump_data(fp, hx->get_primitive_desc().get_size() / sizeof(T), (T*)hx->get_data_handle());
+
+      if (HasInputC()) {
+        fprintf(fp, "\n------------cx----------\n");
+        dump_data(fp, cx->get_primitive_desc().get_size() / sizeof(T), (T*)cx->get_data_handle());
+      }
+
+      fprintf(fp, "\n------------weights----------\n");
+      dump_data(fp, weights->get_primitive_desc().get_size() / sizeof(T), (T*)weights->get_data_handle());
+
+      fprintf(fp, "\n------------dy----------\n");
+      dump_data(fp, dy->get_primitive_desc().get_size() / sizeof(T), (T*)dy->get_data_handle());
+
+      fprintf(fp, "\n------------dhy----------\n");
+      dump_data(fp, dhy->get_primitive_desc().get_size() / sizeof(T), (T*)dhy->get_data_handle());
+
+      if (HasInputC()) {
+        fprintf(fp, "\n------------dcy----------\n");
+        dump_data(fp, dcy->get_primitive_desc().get_size() / sizeof(T), (T*)dcy->get_data_handle());
+      }
+
+      fprintf(fp, "\n------------workspace----------\n");
+      dump_data(fp, workspace->get_primitive_desc().get_size() / sizeof(T), (T*)workspace->get_data_handle());
+
+      fprintf(fp, "\n------------dx----------\n");
+      dump_data(fp, dx->get_primitive_desc().get_size() / sizeof(T), (T*)dx->get_data_handle());
+
+      fprintf(fp, "\n------------dhx----------\n");
+      dump_data(fp, dhx->get_primitive_desc().get_size() / sizeof(T), (T*)dhx->get_data_handle());
+
+      if (HasInputC()) {
+        fprintf(fp, "\n------------dcx----------\n");
+        dump_data(fp, dcx->get_primitive_desc().get_size() / sizeof(T), (T*)dcx->get_data_handle());
+      }
+
+      fprintf(fp, "\n------------dweights----------\n");
+      dump_data(fp, dweights->get_primitive_desc().get_size() / sizeof(T), (T*)dweights->get_data_handle());
+
+      fclose(fp);
+      fp = NULL;
+    }
+#endif
+
+    if (HasInputC()) {
+      delete cx;
+      delete cy;
+      delete dcx;
+      delete dcy;
     }
 
     delete x;
