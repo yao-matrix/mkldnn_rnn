@@ -12,9 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ==============================================================================
-"""Ops for fused MKLdnn RNN models.
+"""Ops for fused Mkldnn RNN models.
 
-@@mkldnnRNNRelu
+@@MkldnnRNNRelu
 @@RNNParamsSaveable
 """
 
@@ -22,19 +22,19 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
-# from tensorflow.contrib.mkldnn_rnn.python.ops.mkldnn_rnn_ops import mkldnnGRU
-# from tensorflow.contrib.mkldnn_rnn.python.ops.mkldnn_rnn_ops import mkldnnLSTM
-from tensorflow.contrib.mkldnn_rnn.python.ops.mkldnn_rnn_ops import mkldnnRNNRelu
-# from tensorflow.contrib.mkldnn_rnn.python.ops.mkldnn_rnn_ops import mkldnnRNNTanh
+# from tensorflow.contrib.mkldnn_rnn.python.ops.mkldnn_rnn_ops import MkldnnGRU
+# from tensorflow.contrib.mkldnn_rnn.python.ops.mkldnn_rnn_ops import MkldnnLSTM
+from tensorflow.contrib.mkldnn_rnn.python.ops.mkldnn_rnn_ops import MkldnnRNNRelu
+# from tensorflow.contrib.mkldnn_rnn.python.ops.mkldnn_rnn_ops import MkldnnRNNTanh
 from tensorflow.contrib.mkldnn_rnn.python.ops.mkldnn_rnn_ops import RNNParamsSaveable
 
 from tensorflow.python.util.all_util import remove_undocumented
 
 _allowed_symbols = [
-    # "CudnnGRU",
-    # "CudnnLSTM",
-    "mkldnnRNNRelu",
-    # "CudnnRNNTanh",
+    # "MkldnnGRU",
+    # "MkldnnLSTM",
+    "MkldnnRNNRelu",
+    # "MkldnnRNNTanh",
     "RNNParamsSaveable",
 ]
 
