@@ -19,7 +19,7 @@ limitations under the License.
 #include "tensorflow/core/framework/shape_inference.h"
 #include "tensorflow/core/lib/strings/strcat.h"
 
-#include "tensorflow/contrib/mkldnn_rnn/include/mkldnn.hpp"
+#include "tensorflow/contrib/mkldnn_rnn/mkl-dnn/include/mkldnn.hpp"
 
 namespace tensorflow {
 namespace {

@@ -68,7 +68,7 @@ limitations under the License.
  *
  */
 
-#include "tensorflow/contrib/mkldnn_rnn/include/mkldnn.hpp"
+#include "tensorflow/contrib/mkldnn_rnn/mkl-dnn/include/mkldnn.hpp"
 
 namespace tensorflow {
 

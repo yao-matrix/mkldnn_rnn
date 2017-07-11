@@ -20,9 +20,9 @@ load("//tensorflow:tensorflow.bzl", "tf_py_test")
 cc_library(
     name = "mkldnn_binary_blob",
     srcs = [
-        "lib/libmkldnn.so",
+        "mkl-dnn/lib/libmkldnn.so",
     ],
-    includes = ["include/."],
+    includes = ["mkl-dnn/include/."],
     visibility = ["//visibility:public"],
 )
 
