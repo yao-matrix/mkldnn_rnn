@@ -17,6 +17,15 @@ load("//tensorflow:tensorflow.bzl", "tf_kernel_library")
 load("//tensorflow:tensorflow.bzl", "tf_custom_op_py_library")
 load("//tensorflow:tensorflow.bzl", "tf_py_test")
 
+cc_library(
+    name = "mkldnn_binary_blob",
+    srcs = [
+        "lib/libmkldnn.so",
+    ],
+    includes = ["include/."],
+    visibility = ["//visibility:public"],
+)
+
 tf_custom_op_library(
     name = "python/ops/_mkldnn_rnn_ops.so",
     srcs = [
@@ -25,6 +34,8 @@ tf_custom_op_library(
     ],
     deps = [
         "//tensorflow/core/kernels:bounds_check_lib",
+        "//third_party/mkl:intel_binary_blob",
+        ":mkldnn_binary_blob",
     ],
 )
 
@@ -37,6 +48,8 @@ tf_kernel_library(
         "//tensorflow/core:lib_internal",
         "//tensorflow/core/kernels:bounds_check_lib",
         "//third_party/eigen3",
+        "//third_party/mkl:intel_binary_blob",
+        ":mkldnn_binary_blob",
     ],
 )
 
@@ -44,6 +57,8 @@ tf_gen_op_libs(
     op_lib_names = ["mkldnn_rnn_ops"],
     deps = [
         "//tensorflow/core:lib",
+        "//third_party/mkl:intel_binary_blob",
+        ":mkldnn_binary_blob",
     ],
 )
 
