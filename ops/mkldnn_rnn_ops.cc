@@ -145,6 +145,10 @@ Compute the backprop of both data and weights in a RNN.
 )doc",
                          kMkldnnRNNCommonAttrs, kMkldnnRNNForwardTensors(),
                          R"doc(
+input: a 3-D tensor with the shape of [seq_length, batch_size, input_size].
+input_h: a 3-D tensor with the shape of [num_layer * dir, batch_size,    num_units].
+input_c: For LSTM, a 3-D tensor with the shape of    [num_layer * dir, batch_size, num_units]. For other models, it is ignored.
+params: a 1-D tensor that contains the weights and biases in an opaque layout.
 input_dy: A 3-D tensor with the same shape as output in the forward pass.
 input_dhy: A 3-D tensor with the same shape as output_h in the forward
     pass.
