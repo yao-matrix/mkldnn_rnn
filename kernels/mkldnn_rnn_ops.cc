@@ -43,6 +43,7 @@ limitations under the License.
 #include "tensorflow/core/lib/strings/stringprintf.h"
 #include "tensorflow/core/platform/mutex.h"
 #include "tensorflow/core/platform/types.h"
+#include "tensorflow/core/platform/logging.h"
 #include "tensorflow/core/util/env_var.h"
 
 #include "tensorflow/contrib/mkldnn_rnn/mkl-dnn/include/mkldnn.hpp"
@@ -104,7 +105,11 @@ Status ParseRNNInputMode(const string& str, input_mode* rnn_input_mode) {
   } else if (str == "skip_input") {
     *rnn_input_mode = input_mode::rnn_skip_input;
     return Status::OK();
+  } else if (str == "auto_select") {
+    *rnn_input_mode = input_mode::rnn_linear_input;
+    return Status::OK();
   }
+ 
   return errors::InvalidArgument("Invalid RNN input mode: ", str);
 }
 
@@ -156,7 +161,7 @@ struct MkldnnModelShapes {
 // Extract and checks the forward input tensors, parameters, and shapes from the
 // OpKernelContext.
 Status ExtractForwardInput(OpKernelContext* context,
-                           const CudnnModelTypes& model_types,
+                           const MkldnnModelTypes& model_types,
                            const Tensor** input, const Tensor** input_h,
                            const Tensor** input_c, const Tensor** params,
                            MkldnnModelShapes* model_shapes) {
@@ -177,6 +182,7 @@ Status ExtractForwardInput(OpKernelContext* context,
   model_shapes->input_size = (*input)->dim_size(2);
   model_shapes->input_shape = (*input)->shape();
   model_shapes->dir_count = (model_types.rnn_direction_mode == direction::rnn_bidirectional) ? 2 : 1;
+  LOG(ERROR) << "input size: " << (*input)->dim_size(0) << ", " << (*input)->dim_size(1) << ", " << (*input)->dim_size(2);
 
   if ((*input_h)->dims() != 3) {
     return errors::InvalidArgument("RNN input must be a 3-D vector.");
@@ -196,7 +202,7 @@ Status ExtractForwardInput(OpKernelContext* context,
   }
 
   // c layout: (L * dir_count) x N x num_units
-  if (model_types->HasInputC()) {
+  if (model_types.HasInputC()) {
     if ((*input_h)->shape() != (*input_c)->shape()) {
       return errors::InvalidArgument(
           "input_h and input_c must have the same shape: ",
@@ -231,12 +237,12 @@ class MkldnnRNNKernelCommon : public OpKernel {
   }
 
   bool HasInputC() const { return model_types_.HasInputC(); }
-  RnnMode rnn_mode() const { return model_types_.rnn_mode; }
-  TFRNNInputMode rnn_input_mode() const { return model_types_.rnn_input_mode; }
-  RnnDirectionMode rnn_direction_mode() const {
+  algorithm rnn_mode() const { return model_types_.rnn_mode; }
+  input_mode rnn_input_mode() const { return model_types_.rnn_input_mode; }
+  direction rnn_direction_mode() const {
     return model_types_.rnn_direction_mode;
   }
-  CudnnModelTypes model_types() const { return model_types_; }
+  MkldnnModelTypes model_types() const { return model_types_; }
   float dropout() const { return dropout_; }
   uint64 seed() { return (static_cast<uint64>(seed_) << 32) | seed2_; }
  private:
@@ -245,7 +251,7 @@ class MkldnnRNNKernelCommon : public OpKernel {
   float dropout_;
   // bool reset_rnd_gen_state_;
 
-  CudnnModelTypes model_types_;
+  MkldnnModelTypes model_types_;
 };
 
 // A class that returns the size of the parameter buffer. The user should
@@ -259,7 +265,54 @@ class MkldnnRNNParamsSizeOp<CPUDevice, T, Index> : public MkldnnRNNKernelCommon 
       : MkldnnRNNKernelCommon(context) {}
 
   void Compute(OpKernelContext* context) override {
-    int64 params_size = 200000000;
+    int64 params_size = -1;
+    int dir_count = rnn_direction_mode() == direction::rnn_unidirectional ? 1 : 2;
+
+    const Tensor* num_layers_t = nullptr;
+    context->input("num_layers", &num_layers_t);
+    if (!TensorShapeUtils::IsScalar(num_layers_t->shape())) {
+      LOG(ERROR) << "num_layers is not a scalar";
+    }
+    int num_layers = num_layers_t->scalar<int>()();
+
+    const Tensor* num_units_t = nullptr;
+    context->input("num_units", &num_units_t);
+    if (!TensorShapeUtils::IsScalar(num_units_t->shape())) {
+      LOG(ERROR) << "num_units is not a scalar";
+    }
+    int num_units = num_units_t->scalar<int>()();
+
+    const Tensor* input_size_t = nullptr;
+    context->input("input_size", &input_size_t);
+    if (!TensorShapeUtils::IsScalar(input_size_t->shape())) {
+      LOG(ERROR) << "input_size is not a scalar";
+    }
+    int input_size = input_size_t->scalar<int>()();
+
+    int first_layer_weights = 0;
+    int higher_layer_weights = 0;
+    int all_biases = 0;
+
+    // TODO need complete logics here
+    switch (rnn_mode()) {
+      case algorithm::rnn_relu:
+      case algorithm::rnn_tanh:
+        first_layer_weights = num_units * (input_size + num_units + 2);
+        higher_layer_weights = (num_layers - 1) * num_units * (2 * num_units + 2);
+        params_size = (first_layer_weights + higher_layer_weights) * dir_count;
+        break;
+      case algorithm::rnn_lstm:
+        first_layer_weights = 4 * num_units * (input_size + num_units + 2);
+        higher_layer_weights = 4 * (num_layers - 1) * num_units * (2 * num_units + 2);
+        params_size = (first_layer_weights + higher_layer_weights) * dir_count;       
+        break;
+      case algorithm::rnn_gru:
+        // TODO
+        break;
+      default:
+        LOG(WARNING) << "Invalid RNN mode: " << rnn_mode();
+        break;
+    }
 
     Tensor* output_t = nullptr;
     OP_REQUIRES_OK(context, context->allocate_output(0, {1}, &output_t));
@@ -282,32 +335,32 @@ class MkldnnRNNForwardOp<CPUDevice, T> : public MkldnnRNNKernelCommon {
   }
 
   void Compute(OpKernelContext* context) override {
-    const Tensor* input = nullptr;
-    const Tensor* input_h = nullptr;
-    const Tensor* input_c = nullptr;
-    const Tensor* params = nullptr;
+    const Tensor* Tx = nullptr;
+    const Tensor* Thx = nullptr;
+    const Tensor* Tcx = nullptr;
+    const Tensor* Tweights = nullptr;
     MkldnnModelShapes model_shapes;
 
     OP_REQUIRES_OK(context,
-                   ExtractForwardInput(context, &model_types_, &input, &input_h,
-                                       &input_c, &params, &model_shapes));
+                   ExtractForwardInput(context, model_types(), &Tx, &Thx,
+                                       &Tcx, &Tweights, &model_shapes));
     // const auto& input_shape = model_shapes.input_shape;
     const auto& hidden_state_shape = model_shapes.hidden_state_shape;
     const auto& output_shape = model_shapes.output_shape;
 
-    Tensor* output = nullptr;
-    OP_REQUIRES_OK(context, context->allocate_output(0, output_shape, &output));
-    Tensor* output_h = nullptr;
+    Tensor* Ty = nullptr;
+    OP_REQUIRES_OK(context, context->allocate_output(0, output_shape, &Ty));
+    Tensor* Thy = nullptr;
     OP_REQUIRES_OK(context,
-                   context->allocate_output(1, hidden_state_shape, &output_h));
-    Tensor* output_c = nullptr;
+                   context->allocate_output(1, hidden_state_shape, &Thy));
+    Tensor* Tcy = nullptr;
     if (HasInputC()) {
       // Only LSTM uses input_c and output_c. So for all other models, we only
       // need to create dummy outputs.
       OP_REQUIRES_OK(
-          context, context->allocate_output(2, hidden_state_shape, &output_c));
+          context, context->allocate_output(2, hidden_state_shape, &Tcy));
     } else {
-      OP_REQUIRES_OK(context, context->allocate_output(2, {}, &output_c));
+      OP_REQUIRES_OK(context, context->allocate_output(2, {}, &Tcy));
     }
 
     if (!is_training_) {
@@ -333,7 +386,7 @@ class MkldnnRNNForwardOp<CPUDevice, T> : public MkldnnRNNKernelCommon {
     int state_outputs = 1; // for rnn_forward::desc creation
     int wl_size;
     int wx_size;
-  
+
     memory::data_type a_data_type = memory::data_type::f32;
     eng.reset(new engine(engine::kind::cpu, 0));
 
@@ -345,7 +398,7 @@ class MkldnnRNNForwardOp<CPUDevice, T> : public MkldnnRNNKernelCommon {
     }
     const int total_w = model_shapes.num_layers == 1 ? model_shapes.dir_count * wl_size : model_shapes.dir_count
                         * (wl_size + (model_shapes.num_layers - 1) * wx_size);
- 
+
     x_desc.reset(new memory::desc({model_shapes.seq_length,
                                    model_shapes.batch_size,
                                    model_shapes.input_size},
@@ -367,35 +420,34 @@ class MkldnnRNNForwardOp<CPUDevice, T> : public MkldnnRNNKernelCommon {
     hy.reset(new memory({ *hx_desc, *eng }));
     cy.reset(new memory({ *hx_desc, *eng }));
     weights.reset(new memory({ *weights_desc, *eng }));
-    
+
     prop_kind a_prop_kind = is_training_ ? prop_kind::forward_training : prop_kind::forward_inference;
-    auto rnn_fwd_desc = mkldnn::rnn_forward::desc(a_prop_kind, static_cast<mkldnn::algorithm>(model_types_.rnn_mode),
-                static_cast<mkldnn::direction>(model_types_.rnn_direction_mode), static_cast<mkldnn::input_mode>(model_types_.rnn_input_mode), model_shapes.num_units,
-                model_shapes.num_layers, model_shapes.seq_length,
-                state_outputs, *x_desc, *hx_desc, *y_desc, *weights_desc);
+    auto rnn_fwd_desc = mkldnn::rnn_forward::desc(a_prop_kind, rnn_mode(),
+                                                  rnn_direction_mode(), rnn_input_mode(), model_shapes.num_units,
+                                                  model_shapes.num_layers, model_shapes.seq_length,
+                                                  state_outputs, *x_desc, *hx_desc, *y_desc, *weights_desc);
     rnn_fwd_prim_desc.reset(new rnn_forward::primitive_desc(rnn_fwd_desc, *eng));
 
     std::vector<primitive> pipeline;
     auto s = stream(stream::kind::lazy);
-    
+
     // FIXME  x/hx/weights->get_primitive_desc().get_size() should be equal to that from tensor
 
-    memcpy(x->get_data_handle(), input->template flat<T>().data(), input->template flat<T>().size() * sizeof(T));
-    memcpy(hx->get_data_handle(), input_h->template flat<T>().data(), input_h->template flat<T>().size() * sizeof(T));
-    memcpy(weights->get_data_handle(), params->template flat<T>().data(), params->template flat<T>().size() * sizeof(T));
-    
+    memcpy(x->get_data_handle(), Tx->template flat<T>().data(), Tx->template flat<T>().size() * sizeof(T));
+    memcpy(hx->get_data_handle(), Thx->template flat<T>().data(), Thx->template flat<T>().size() * sizeof(T));
+    memcpy(weights->get_data_handle(), Tweights->template flat<T>().data(), Tweights->template flat<T>().size() * sizeof(T));
+
     if (is_training_) {
-      auto workspace_primitive_desc
-                    = rnn_fwd_prim_desc->workspace_primitive_desc();
+      auto workspace_primitive_desc = rnn_fwd_prim_desc->workspace_primitive_desc();
       workspace.reset(new memory(workspace_primitive_desc));
       // TODO get workspace shape and creat output reserve space
       if (HasInputC()) {
-        memcpy(cx->get_data_handle(), input_c->template flat<T>().data(), input_c->template flat<T>().size() * sizeof(T)); 
+        memcpy(cx->get_data_handle(), Tcx->template flat<T>().data(), Tcx->template flat<T>().size() * sizeof(T)); 
         auto l = rnn_forward(*rnn_fwd_prim_desc, x.get(), hx.get(), cx.get(),
                  weights.get(), y.get(), hy.get(), cy.get(), workspace.get());
         pipeline.push_back(l);
         s.submit(pipeline).wait();
-        memcpy(output_c->template flat<T>().data(), cy->get_data_handle(), output_h->template flat<T>().size() * sizeof(T)); 
+        memcpy(Tcy->template flat<T>().data(), cy->get_data_handle(), Thy->template flat<T>().size() * sizeof(T)); 
       } else {
         auto l = rnn_forward(*rnn_fwd_prim_desc, x.get(), hx.get(), nullptr, 
                  weights.get(), y.get(), hy.get(), nullptr, workspace.get());
@@ -405,12 +457,12 @@ class MkldnnRNNForwardOp<CPUDevice, T> : public MkldnnRNNKernelCommon {
       // TODO need to copy workspace to output reserve_space
     } else {
       if (HasInputC()) {
-        memcpy(cx->get_data_handle(), input_c->template flat<T>().data(), input_c->template flat<T>().size() * sizeof(T)); 
+        memcpy(cx->get_data_handle(), Tcx->template flat<T>().data(), Tcx->template flat<T>().size() * sizeof(T)); 
         auto l = rnn_forward(*rnn_fwd_prim_desc, x.get(), hx.get(), cx.get(),
                  weights.get(), y.get(), hy.get(), cy.get(), nullptr);
         pipeline.push_back(l);
         s.submit(pipeline).wait();
-        memcpy(output_c->template flat<T>().data(), cy->get_data_handle(), output_h->template flat<T>().size() * sizeof(T)); 
+        memcpy(Tcy->template flat<T>().data(), cy->get_data_handle(), Thy->template flat<T>().size() * sizeof(T)); 
       } else {
         auto l = rnn_forward(*rnn_fwd_prim_desc, x.get(), hx.get(), nullptr, 
                  weights.get(), y.get(), hy.get(), nullptr, nullptr);
@@ -418,8 +470,8 @@ class MkldnnRNNForwardOp<CPUDevice, T> : public MkldnnRNNKernelCommon {
         s.submit(pipeline).wait();
       }
     }
-    memcpy(output->template flat<T>().data(), y->get_data_handle(), output->template flat<T>().size() * sizeof(T));
-    memcpy(output_h->template flat<T>().data(), hy->get_data_handle(), output_h->template flat<T>().size() * sizeof(T));
+    memcpy(Ty->template flat<T>().data(), y->get_data_handle(), Ty->template flat<T>().size() * sizeof(T));
+    memcpy(Thy->template flat<T>().data(), hy->get_data_handle(), Thy->template flat<T>().size() * sizeof(T));
   }
 
  private:
@@ -448,7 +500,7 @@ class MkldnnRNNBackwardOp<CPUDevice, T> : public MkldnnRNNKernelCommon {
     const Tensor* Tweights = nullptr;
     MkldnnModelShapes model_shapes;
     OP_REQUIRES_OK(context,
-                   ExtractForwardInput(context, &model_types_, &Tx, &Th,
+                   ExtractForwardInput(context, model_types(), &Tx, &Th,
                                        &Tc, &Tweights, &model_shapes));
 
     // const auto& input_shape = model_shapes.input_shape;
@@ -475,7 +527,7 @@ class MkldnnRNNBackwardOp<CPUDevice, T> : public MkldnnRNNKernelCommon {
       // Only LSTM uses input_c and output_c. So for all other models, we only
       // need to create dummy outputs.
       OP_REQUIRES_OK(context, context->input("output_c_backprop", &Tdcy));
-      OP_REQUIRES(context, input_dcy->shape() == hidden_state_shape,
+      OP_REQUIRES(context, Tdcy->shape() == hidden_state_shape,
                   errors::InvalidArgument("Invalid dcy shape: ",
                                           Tdcy->shape().DebugString(), " ",
                                           hidden_state_shape.DebugString()));
@@ -566,17 +618,17 @@ class MkldnnRNNBackwardOp<CPUDevice, T> : public MkldnnRNNKernelCommon {
     dweights.reset(new memory({ *weights_desc, *eng }));
 
     auto rnn_fwd_desc = rnn_forward::desc(prop_kind::forward_training, 
-                                          static_cast<mkldnn::algorithm>(model_types_.rnn_mode),
-                                          static_cast<mkldnn::direction>(model_types_.rnn_direction_mode),
-                                          static_cast<mkldnn::input_mode>(model_types_.rnn_input_mode),
+                                          static_cast<mkldnn::algorithm>(rnn_mode()),
+                                          static_cast<mkldnn::direction>(rnn_direction_mode()),
+                                          static_cast<mkldnn::input_mode>(rnn_input_mode()),
                                           model_shapes.num_units, model_shapes.num_layers, model_shapes.seq_length,
                                           state_outputs, *x_desc, *hx_desc, *y_desc, *weights_desc);
     rnn_fwd_prim_desc.reset(new rnn_forward::primitive_desc(rnn_fwd_desc, *eng));
 
     auto rnn_bwd_desc = rnn_backward::desc(prop_kind::backward, 
-                                           static_cast<mkldnn::algorithm>(model_types_.rnn_mode),
-                                           static_cast<mkldnn::direction>(model_types_.rnn_direction_mode),
-                                           static_cast<mkldnn::input_mode>(model_types_.rnn_input_mode),
+                                           static_cast<mkldnn::algorithm>(rnn_mode()),
+                                           static_cast<mkldnn::direction>(rnn_direction_mode()),
+                                           static_cast<mkldnn::input_mode>(rnn_input_mode()),
                                            model_shapes.num_units, model_shapes.num_layers, model_shapes.seq_length,
                                            state_outputs, *x_desc, *hx_desc, *y_desc, *weights_desc);
     rnn_bwd_prim_desc.reset(new rnn_backward::primitive_desc(rnn_bwd_desc, *eng, *rnn_fwd_prim_desc));
@@ -591,7 +643,7 @@ class MkldnnRNNBackwardOp<CPUDevice, T> : public MkldnnRNNKernelCommon {
 
     memcpy(x->get_data_handle(), Tx->template flat<T>().data(), Tx->template flat<T>().size() * sizeof(T));
     memcpy(hx->get_data_handle(), Th->template flat<T>().data(), Th->template flat<T>().size() * sizeof(T));
-    memcpy(weights->get_data_handle(), params->template flat<T>().data(), Tweights->template flat<T>().size() * sizeof(T));
+    memcpy(weights->get_data_handle(), Tweights->template flat<T>().data(), Tweights->template flat<T>().size() * sizeof(T));
     memcpy(dy->get_data_handle(), Tdy->template flat<T>().data(), Tdy->template flat<T>().size() * sizeof(T));
     memcpy(dhy->get_data_handle(), Tdhy->template flat<T>().data(), Tdhy->template flat<T>().size() * sizeof(T));
     memcpy(workspace->get_data_handle(), Tworkspace->template flat<T>().data(), Tworkspace->template flat<T>().size() * sizeof(T));
@@ -607,7 +659,7 @@ class MkldnnRNNBackwardOp<CPUDevice, T> : public MkldnnRNNKernelCommon {
       pipeline.push_back(l);
       s.submit(pipeline).wait();
 
-      memcpy(output_dcx->template flat<T>().data(), dcx->get_data_handle(), output_dcx->template flat<T>().size() * sizeof(T));
+      memcpy(Tdcx->template flat<T>().data(), dcx->get_data_handle(), Tdcx->template flat<T>().size() * sizeof(T));
     } else {
       auto l = rnn_backward(*rnn_bwd_prim_desc, x.get(), hx.get(), nullptr,
                             dy.get(), dhy.get(), nullptr, weights.get(), workspace.get(),

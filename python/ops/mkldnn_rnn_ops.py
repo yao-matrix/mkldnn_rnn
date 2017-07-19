@@ -35,33 +35,15 @@ _mkldnn_rnn_ops_so = loader.load_op_library(
 
 
 _mkldnn_rnn_common_doc_string = """
-  Mkldnn RNN has an opaque parameter buffer that can be used for inference and
-  training. But it is possible that the layout of the parameter buffers
-  changes between generations. So it is highly recommended to use
-  RNNParamsSaveable to save and restore weights and biases in a canonical
-  format.
-
   This is a typical use case:
     * The user creates a MkldnnRNN model.
     * The user query that parameter buffer size.
     * The user creates a variable of that size that serves as the parameter
         buffers.
-    * The user either initialize the parameter buffer, or load the canonical
+    * The user either initialize the parameter buffer, or load the existed
         weights into the parameter buffer.
     * The user calls the model with the parameter buffer for inference, or
         training.
-    * If training, the user creates a Saver object.
-    * If training, the user creates a RNNParamsSaveable object from the
-        parameter buffer for it to be later saved in the canonical format. When
-        creating a RNNParamsSaveable object, a name could be provided, which is
-        useful in distinguishing the names of multiple RNNParamsSaveable
-        objects (e.g. for an encoder-decoder model).
-    * Once a while, the user saves the parameter buffer into model checkpoints
-        with Saver.save().
-    * When restoring, the user creates a RNNParamsSaveable object and uses
-      Saver.restore() to restore the paramter buffer from the canonical format
-      to a user-defined format, as well as to restore other savable objects
-      in the checkpoint file.
 """
 
 
@@ -231,7 +213,7 @@ class MkldnnLSTM(_MkldnnRNN):
     return (output, output_h, output_c)
 
 
-class _MkldnnRNNNoInputC(_MKldnnRNN):
+class _MkldnnRNNNoInputC(_MkldnnRNN):
   """Simple MkldnnRNN models without input_c."""
   __doc__ += _mkldnn_rnn_common_doc_string
 
@@ -272,7 +254,7 @@ class _MkldnnRNNNoInputC(_MKldnnRNN):
         seed=seed)
 
   def __call__(self, input_data, input_h, params, is_training=True):
-    """Runs the forward step for the MKldnn LSTM model.
+    """Runs the forward step for the Mkldnn LSTM model.
 
     Args:
       input_data: the input sequence to the LSTM model.
@@ -316,7 +298,7 @@ class MkldnnRNNRelu(_MkldnnRNNNoInputC):
   _NUM_PARAMS_PER_LAYER = 2
 
 
-@ops.RegisterGradient("MKldnnRNN")
+@ops.RegisterGradient("MkldnnRNN")
 def _mkldnn_rnn_backward(op, *grad):
   if not op.get_attr("is_training"):
     raise ValueError(

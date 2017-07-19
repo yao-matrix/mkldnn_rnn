@@ -120,7 +120,7 @@ tf_py_test(
 )
 
 tf_py_test(
-    name = "cudnn_rnn_ops_benchmark",
+    name = "mkldnn_rnn_ops_benchmark",
     size = "large",
     srcs = ["python/kernel_tests/mkldnn_rnn_ops_benchmark.py"],
     additional_deps = [

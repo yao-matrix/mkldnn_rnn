@@ -15,7 +15,6 @@
 """Ops for fused Mkldnn RNN models.
 
 @@MkldnnRNNRelu
-@@RNNParamsSaveable
 """
 
 from __future__ import absolute_import
@@ -23,19 +22,19 @@ from __future__ import division
 from __future__ import print_function
 
 # from tensorflow.contrib.mkldnn_rnn.python.ops.mkldnn_rnn_ops import MkldnnGRU
-# from tensorflow.contrib.mkldnn_rnn.python.ops.mkldnn_rnn_ops import MkldnnLSTM
+from tensorflow.contrib.mkldnn_rnn.python.ops.mkldnn_rnn_ops import MkldnnLSTM
 from tensorflow.contrib.mkldnn_rnn.python.ops.mkldnn_rnn_ops import MkldnnRNNRelu
 # from tensorflow.contrib.mkldnn_rnn.python.ops.mkldnn_rnn_ops import MkldnnRNNTanh
-from tensorflow.contrib.mkldnn_rnn.python.ops.mkldnn_rnn_ops import RNNParamsSaveable
+# from tensorflow.contrib.mkldnn_rnn.python.ops.mkldnn_rnn_ops import RNNParamsSaveable
 
 from tensorflow.python.util.all_util import remove_undocumented
 
 _allowed_symbols = [
     # "MkldnnGRU",
-    # "MkldnnLSTM",
+    "MkldnnLSTM",
     "MkldnnRNNRelu",
     # "MkldnnRNNTanh",
-    "RNNParamsSaveable",
+    # "RNNParamsSaveable",
 ]
 
 remove_undocumented(__name__)

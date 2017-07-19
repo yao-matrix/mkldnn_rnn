@@ -1,0 +1,52 @@
+From e75764cd41933790785e260a00c293cd6fbca10b Mon Sep 17 00:00:00 2001
+From: YAO Matrix <yaoweifeng0301@126.com>
+Date: Wed, 19 Jul 2017 15:55:32 +0800
+Subject: [PATCH] tensorflow patch to enable mkldnn_rnn
+
+Signed-off-by: YAO Matrix <yaoweifeng0301@126.com>
+---
+ tensorflow/contrib/BUILD  | 1 +
+ tensorflow/tensorflow.bzl | 2 +-
+ third_party/mkl/BUILD     | 1 +
+ 3 files changed, 3 insertions(+), 1 deletion(-)
+
+diff --git a/tensorflow/contrib/BUILD b/tensorflow/contrib/BUILD
+index 1ac7e53..195244f 100755
+--- a/tensorflow/contrib/BUILD
++++ b/tensorflow/contrib/BUILD
+@@ -20,6 +20,7 @@ py_library(
+         "//tensorflow/contrib/copy_graph:copy_graph_py",
+         "//tensorflow/contrib/crf:crf_py",
+         "//tensorflow/contrib/cudnn_rnn:cudnn_rnn_py",
++        "//tensorflow/contrib/mkldnn_rnn:mkldnn_rnn_py",
+         "//tensorflow/contrib/data",
+         "//tensorflow/contrib/deprecated:deprecated_py",
+         "//tensorflow/contrib/distributions:distributions_py",
+diff --git a/tensorflow/tensorflow.bzl b/tensorflow/tensorflow.bzl
+index 348745f..8e0aee7 100644
+--- a/tensorflow/tensorflow.bzl
++++ b/tensorflow/tensorflow.bzl
+@@ -127,7 +127,7 @@ def tf_copts():
+       "-DEIGEN_AVOID_STL_ARRAY",
+       "-Iexternal/gemmlowp",
+       "-Wno-sign-compare",
+-      "-fno-exceptions",
++      "-fexceptions",
+   ] + if_cuda(["-DGOOGLE_CUDA=1"]) + if_mkl(["-DINTEL_MKL=1"]) + if_android_arm(
+       ["-mfpu=neon"]) + if_x86(["-msse3"]) + select({
+           clean_dep("//tensorflow:android"): [
+diff --git a/third_party/mkl/BUILD b/third_party/mkl/BUILD
+index 8c86766..9ff15b7 100644
+--- a/third_party/mkl/BUILD
++++ b/third_party/mkl/BUILD
+@@ -19,6 +19,7 @@ cc_library(
+         "libdl.so.2",
+         "libmklml_intel.so",
+         "libiomp5.so",
++        "libmkldnn.so",
+     ]),
+     includes = ["."],
+     visibility = ["//visibility:public"],
+-- 
+1.8.3.1
+

@@ -1,4 +1,7 @@
 # How to build
-1. put this git into ./tensorflow/contrib folder
-2. $ patch -p1 < compile.patch
-3. $ bazel build --config=mkl -c opt //tensorflow/contrib/mkldnn_rnn:python/ops/_mkldnn_rnn_ops.so
+1. put this git in ./tensorflow/contrib folder
+2. cd to tensorflow root patch
+3. $ git am -3 ./tensorflow/contrib/mkldnn_rnn/0001-tensorflow-patch-to-enable-mkldnn_rnn.patch
+4. $ cp ./tensorflow/contrib/mkldnn_rnn/build.sh ./
+5. $ cp ./tensorflow/contrib/mkldnn_rnn/mkl-dnn/lib/libmkldnn.so ./third_party/mkl/
+5. $ . ./build.sh
