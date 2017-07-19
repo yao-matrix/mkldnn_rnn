@@ -304,7 +304,7 @@ class MkldnnRNNParamsSizeOp<CPUDevice, T, Index> : public MkldnnRNNKernelCommon 
       case algorithm::rnn_lstm:
         first_layer_weights = 4 * num_units * (input_size + num_units + 2);
         higher_layer_weights = 4 * (num_layers - 1) * num_units * (2 * num_units + 2);
-        params_size = (first_layer_weights + higher_layer_weights) * dir_count;       
+        params_size = (first_layer_weights + higher_layer_weights) * dir_count;
         break;
       case algorithm::rnn_gru:
         // TODO
@@ -442,14 +442,14 @@ class MkldnnRNNForwardOp<CPUDevice, T> : public MkldnnRNNKernelCommon {
       workspace.reset(new memory(workspace_primitive_desc));
       // TODO get workspace shape and creat output reserve space
       if (HasInputC()) {
-        memcpy(cx->get_data_handle(), Tcx->template flat<T>().data(), Tcx->template flat<T>().size() * sizeof(T)); 
+        memcpy(cx->get_data_handle(), Tcx->template flat<T>().data(), Tcx->template flat<T>().size() * sizeof(T));
         auto l = rnn_forward(*rnn_fwd_prim_desc, x.get(), hx.get(), cx.get(),
                  weights.get(), y.get(), hy.get(), cy.get(), workspace.get());
         pipeline.push_back(l);
         s.submit(pipeline).wait();
-        memcpy(Tcy->template flat<T>().data(), cy->get_data_handle(), Thy->template flat<T>().size() * sizeof(T)); 
+        memcpy(Tcy->template flat<T>().data(), cy->get_data_handle(), Thy->template flat<T>().size() * sizeof(T));
       } else {
-        auto l = rnn_forward(*rnn_fwd_prim_desc, x.get(), hx.get(), nullptr, 
+        auto l = rnn_forward(*rnn_fwd_prim_desc, x.get(), hx.get(), nullptr,
                  weights.get(), y.get(), hy.get(), nullptr, workspace.get());
         pipeline.push_back(l);
         s.submit(pipeline).wait();
@@ -457,14 +457,14 @@ class MkldnnRNNForwardOp<CPUDevice, T> : public MkldnnRNNKernelCommon {
       // TODO need to copy workspace to output reserve_space
     } else {
       if (HasInputC()) {
-        memcpy(cx->get_data_handle(), Tcx->template flat<T>().data(), Tcx->template flat<T>().size() * sizeof(T)); 
+        memcpy(cx->get_data_handle(), Tcx->template flat<T>().data(), Tcx->template flat<T>().size() * sizeof(T));
         auto l = rnn_forward(*rnn_fwd_prim_desc, x.get(), hx.get(), cx.get(),
                  weights.get(), y.get(), hy.get(), cy.get(), nullptr);
         pipeline.push_back(l);
         s.submit(pipeline).wait();
-        memcpy(Tcy->template flat<T>().data(), cy->get_data_handle(), Thy->template flat<T>().size() * sizeof(T)); 
+        memcpy(Tcy->template flat<T>().data(), cy->get_data_handle(), Thy->template flat<T>().size() * sizeof(T));
       } else {
-        auto l = rnn_forward(*rnn_fwd_prim_desc, x.get(), hx.get(), nullptr, 
+        auto l = rnn_forward(*rnn_fwd_prim_desc, x.get(), hx.get(), nullptr,
                  weights.get(), y.get(), hy.get(), nullptr, nullptr);
         pipeline.push_back(l);
         s.submit(pipeline).wait();
