@@ -182,7 +182,7 @@ Status ExtractForwardInput(OpKernelContext* context,
   model_shapes->input_size = (*input)->dim_size(2);
   model_shapes->input_shape = (*input)->shape();
   model_shapes->dir_count = (model_types.rnn_direction_mode == direction::rnn_bidirectional) ? 2 : 1;
-  LOG(ERROR) << "input size: " << (*input)->dim_size(0) << ", " << (*input)->dim_size(1) << ", " << (*input)->dim_size(2);
+  // LOG(ERROR) << "input size: " << (*input)->dim_size(0) << ", " << (*input)->dim_size(1) << ", " << (*input)->dim_size(2);
 
   if ((*input_h)->dims() != 3) {
     return errors::InvalidArgument("RNN input must be a 3-D vector.");
@@ -363,10 +363,8 @@ class MkldnnRNNForwardOp<CPUDevice, T> : public MkldnnRNNKernelCommon {
       OP_REQUIRES_OK(context, context->allocate_output(2, {}, &Tcy));
     }
 
-    if (!is_training_) {
-      Tensor* dummy_reserve_space = nullptr;
-      OP_REQUIRES_OK(context, context->allocate_output(3, {}, &dummy_reserve_space));
-    }
+    Tensor* dummy_reserve_space = nullptr;
+    OP_REQUIRES_OK(context, context->allocate_output(3, {}, &dummy_reserve_space));
 
     // FIXME if there is workspace, need to allocate based on rnn ws desc
     std::shared_ptr<engine> eng;
@@ -639,7 +637,7 @@ class MkldnnRNNBackwardOp<CPUDevice, T> : public MkldnnRNNKernelCommon {
     std::vector<primitive> pipeline;
     auto s = stream(stream::kind::lazy);
     
-    // TODO  x/hx/weights->get_primitive_desc().get_size() should be equal to that from tensor
+    // TODO x/hx/weights->get_primitive_desc().get_size() should be equal to that from tensor
 
     memcpy(x->get_data_handle(), Tx->template flat<T>().data(), Tx->template flat<T>().size() * sizeof(T));
     memcpy(hx->get_data_handle(), Th->template flat<T>().data(), Th->template flat<T>().size() * sizeof(T));
@@ -670,6 +668,7 @@ class MkldnnRNNBackwardOp<CPUDevice, T> : public MkldnnRNNKernelCommon {
 
     memcpy(Tdx->template flat<T>().data(), dx->get_data_handle(), Tdx->template flat<T>().size() * sizeof(T));
     memcpy(Tdhx->template flat<T>().data(), dhx->get_data_handle(), Tdhx->template flat<T>().size() * sizeof(T));
+    memcpy(Tdweights->template flat<T>().data(), dweights->get_data_handle(), Tweights->template flat<T>().size() * sizeof(T));
   }
 };
 

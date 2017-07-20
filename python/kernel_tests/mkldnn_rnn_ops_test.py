@@ -264,7 +264,7 @@ class MkldnnRNNTest(TensorFlowTestCase):
     with ops.Graph().as_default():
       for config in test_configs:
         rnn_mode = config["rnn_mode"]
-        print("rnn mode: ", rnn_mode)
+        print("inference rnn mode: ", rnn_mode)
         dropout_list = config.get("dropout", [0.])
         expected = config["expected"]
         tolerance = config["tolerance"]
@@ -293,6 +293,7 @@ class MkldnnRNNTest(TensorFlowTestCase):
     params = variables.Variable(
         random_ops.random_uniform([params_size_t]), validate_shape=False)
     if has_input_c:
+      print("111111111")
       input_c = variables.Variable(
           random_ops.random_uniform(
               [num_layers * dir_count, batch_size, num_units]))
@@ -303,6 +304,7 @@ class MkldnnRNNTest(TensorFlowTestCase):
           input_c=input_c,
           params=params)
     else:
+      print("22222222")
       output, output_h = model(
           input_data=input_data, input_h=input_h, params=params)
     output_sum = math_ops.reduce_sum(output)
@@ -346,32 +348,32 @@ class MkldnnRNNTest(TensorFlowTestCase):
                 "dir_count": 1,
             },
         },
-        {
-            "rnn_mode": "gru",
-            "dropout": [0., 0.5, 1.],
-            "tolerance": 4e-3,
-            "shape": {
-                "num_layers": 2,
-                "num_units": 3,
-                "input_size": 4,
-                "batch_size": 3,
-                "seq_length": 4,
-                "dir_count": 1,
-            },
-        },
-        {
-            "rnn_mode": "rnn_tanh",
-            "dropout": [0., 0.5, 1.],
-            "tolerance": 5e-3,
-            "shape": {
-                "num_layers": 2,
-                "num_units": 3,
-                "input_size": 4,
-                "batch_size": 3,
-                "seq_length": 4,
-                "dir_count": 1,
-            },
-        },
+        # {
+        #     "rnn_mode": "gru",
+        #     "dropout": [0., 0.5, 1.],
+        #     "tolerance": 4e-3,
+        #     "shape": {
+        #         "num_layers": 2,
+        #         "num_units": 3,
+        #         "input_size": 4,
+        #         "batch_size": 3,
+        #         "seq_length": 4,
+        #         "dir_count": 1,
+        #     },
+        # },
+        # {
+        #     "rnn_mode": "rnn_tanh",
+        #     "dropout": [0., 0.5, 1.],
+        #     "tolerance": 5e-3,
+        #     "shape": {
+        #         "num_layers": 2,
+        #         "num_units": 3,
+        #         "input_size": 4,
+        #         "batch_size": 3,
+        #         "seq_length": 4,
+        #         "dir_count": 1,
+        #     },
+        # },
         {
             "rnn_mode": "rnn_relu",
             "dropout": [0., 0.5, 1.],
@@ -389,6 +391,7 @@ class MkldnnRNNTest(TensorFlowTestCase):
     with ops.Graph().as_default():
       for config in test_configs:
         rnn_mode = config["rnn_mode"]
+        print("training rnn mode: ", rnn_mode)
         dropout_list = config.get("dropout", [0.])
         tolerance = config["tolerance"]
         shape = config["shape"]
