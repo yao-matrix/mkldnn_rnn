@@ -293,7 +293,6 @@ class MkldnnRNNTest(TensorFlowTestCase):
     params = variables.Variable(
         random_ops.random_uniform([params_size_t]), validate_shape=False)
     if has_input_c:
-      print("111111111")
       input_c = variables.Variable(
           random_ops.random_uniform(
               [num_layers * dir_count, batch_size, num_units]))
@@ -304,7 +303,6 @@ class MkldnnRNNTest(TensorFlowTestCase):
           input_c=input_c,
           params=params)
     else:
-      print("22222222")
       output, output_h = model(
           input_data=input_data, input_h=input_h, params=params)
     output_sum = math_ops.reduce_sum(output)
