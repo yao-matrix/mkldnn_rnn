@@ -21,7 +21,7 @@ from __future__ import print_function
 import time
 
 from tensorflow.contrib.mkldnn_rnn.python.ops import mkldnn_rnn_ops
-from tensorflow.contrib.rnn.python.ops import core_rnn
+from tensorflow.python.ops import rnn
 from tensorflow.contrib.rnn.python.ops import lstm_ops
 from tensorflow.python.client import session
 from tensorflow.python.framework import dtypes
@@ -33,7 +33,7 @@ from tensorflow.python.ops import init_ops
 from tensorflow.python.ops import rnn_cell
 from tensorflow.python.ops import variables
 from tensorflow.python.platform import test
-
+from tensorflow.python.platform import benchmark
 
 class MkldnnRNNBenchmark(test.Benchmark):
   """Benchmarks Mkldnn LSTM and other related models.
@@ -114,7 +114,7 @@ class MkldnnRNNBenchmark(test.Benchmark):
             [output, output_h, output_c],
             [params, input_data, input_h, input_c])
         training_op = control_flow_ops.group(*all_grads)
-        self._BenchmarkOp(training_op, "cudnn_lstm %s %s" %
+        self._BenchmarkOp(training_op, "mkldnn_lstm %s %s" %
                           (config_name, self._GetConfigDesc(config)))
 
   def benchmarkTfRNNLSTMTraining(self):
@@ -135,7 +135,7 @@ class MkldnnRNNBenchmark(test.Benchmark):
             num_units=num_units, initializer=initializer, state_is_tuple=True)
         multi_cell = rnn_cell.MultiRNNCell(
             [cell() for _ in range(num_layers)])
-        outputs, final_state = core_rnn.static_rnn(
+        outputs, final_state = rnn.static_rnn(
             multi_cell, inputs, dtype=dtypes.float32)
         trainable_variables = ops.get_collection(
             ops.GraphKeys.TRAINABLE_VARIABLES)
@@ -153,7 +153,7 @@ class MkldnnRNNBenchmark(test.Benchmark):
       batch_size = config["batch_size"]
       seq_length = config["seq_length"]
 
-      with ops.Graph().as_default(), ops.device("/gpu:0"):
+      with ops.Graph().as_default(), ops.device("/cpu"):
         inputs = seq_length * [
             array_ops.zeros([batch_size, num_units], dtypes.float32)
         ]
@@ -161,7 +161,7 @@ class MkldnnRNNBenchmark(test.Benchmark):
 
         multi_cell = rnn_cell.MultiRNNCell(
             [cell() for _ in range(num_layers)])
-        outputs, final_state = core_rnn.static_rnn(
+        outputs, final_state = rnn.static_rnn(
             multi_cell, inputs, dtype=dtypes.float32)
         trainable_variables = ops.get_collection(
             ops.GraphKeys.TRAINABLE_VARIABLES)
@@ -171,6 +171,9 @@ class MkldnnRNNBenchmark(test.Benchmark):
         self._BenchmarkOp(training_op, "tf_rnn_lstm_block_cell %s %s" %
                           (config_name, self._GetConfigDesc(config)))
 
+class RNNBenchmarkTest(test.TestCase):
+  def testRun(self):
+   benchmark._run_benchmarks("MkldnnRNN")
 
 if __name__ == "__main__":
   test.main()

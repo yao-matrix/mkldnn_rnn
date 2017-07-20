@@ -70,12 +70,12 @@ class MkldnnRNNTest(TensorFlowTestCase):
     self._create_params_savable(params, model)
     save_path = os.path.join(self.get_temp_dir(), "save-restore-variable-test")
     saver = saver_lib.Saver(write_version=saver_pb2.SaverDef.V2)
-    with self.test_session(use_gpu=True) as sess:
+    with self.test_session(use_gpu=False) as sess:
       sess.run(variables.global_variables_initializer())
       params_v = sess.run(params)
       val = saver.save(sess, save_path)
       self.assertEqual(save_path, val)
-    with self.test_session(use_gpu=True) as sess:
+    with self.test_session(use_gpu=False) as sess:
       reset_params = state_ops.assign(params, array_ops.zeros([params_size_t]))
       sess.run(reset_params)
       saver.restore(sess, save_path)
@@ -112,12 +112,12 @@ class MkldnnRNNTest(TensorFlowTestCase):
           params=params,
           is_training=False)
     total_sum = sum(map(math_ops.reduce_sum, outputs))
-    with self.test_session(use_gpu=True) as sess:
+    with self.test_session(use_gpu=False) as sess:
       sess.run(variables.global_variables_initializer())
       total_sum_v = sess.run(total_sum)
       val = saver.save(sess, save_path)
       self.assertEqual(save_path, val)
-    with self.test_session(use_gpu=True) as sess:
+    with self.test_session(use_gpu=False) as sess:
       reset_params = state_ops.assign(params, array_ops.zeros([params_size_t]))
       sess.run(reset_params)
       saver.restore(sess, save_path)
@@ -131,7 +131,6 @@ class MkldnnRNNTest(TensorFlowTestCase):
                         input_mode="auto_select",
                         direction="unidirection"):
     if direction != "unidirection":
-      # TODO(zhengxq): support bidirection in parameter size estimate.
       raise ValueError("Only unidirection in parameter size estimate")
     first_layer_weights = 4 * num_units * (num_units + input_size)
     higher_layer_weights = 8 * (num_layers - 1) * num_units * num_units
@@ -142,7 +141,7 @@ class MkldnnRNNTest(TensorFlowTestCase):
     min_params_size = self._MinLSTMParamSize(num_layers, num_units, input_size)
     model = self._CreateModel("lstm", num_layers, num_units, input_size)
     params_size = model.params_size()
-    with self.test_session(use_gpu=True) as sess:
+    with self.test_session(use_gpu=False) as sess:
       params_size_v = sess.run(params_size)
       self.assertLessEqual(min_params_size, params_size_v)
 
@@ -192,7 +191,7 @@ class MkldnnRNNTest(TensorFlowTestCase):
     if has_input_c:
       output_c_sum = math_ops.reduce_sum(output_c)
       total_sum += output_c_sum
-    with self.test_session(use_gpu=True) as sess:
+    with self.test_session(use_gpu=False) as sess:
       sess.run(variables.global_variables_initializer())
       total_sum_v = sess.run([total_sum])
 
@@ -332,8 +331,6 @@ class MkldnnRNNTest(TensorFlowTestCase):
 
       self.assertLess(err, tolerance)
 
-  @unittest.skipUnless(test.is_built_with_cuda(),
-                       "Test only applicable when running on GPUs")
   def testSimpleTraining(self):
     test_configs = [
         {
