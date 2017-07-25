@@ -621,7 +621,7 @@ class MkldnnRNNBackwardOp<CPUDevice, T> : public MkldnnRNNKernelCommon {
     rnn_bwd_prim_desc.reset(new rnn_backward::primitive_desc(rnn_bwd_desc, *eng, *rnn_fwd_prim_desc));
 
     auto workspace_primitive_desc  = rnn_fwd_prim_desc->workspace_primitive_desc();
-    workspace.reset(new memory(workspace_primitive_desc));
+    workspace.reset(new memory(workspace_primitive_desc, (void*)(Tworkspace->template flat<T>().data())));
 
     std::vector<primitive> pipeline;
     auto s = stream(stream::kind::lazy);
