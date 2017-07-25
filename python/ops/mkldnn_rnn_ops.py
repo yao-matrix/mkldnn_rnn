@@ -301,8 +301,7 @@ class MkldnnRNNRelu(_MkldnnRNNNoInputC):
 @ops.RegisterGradient("MkldnnRNN")
 def _mkldnn_rnn_backward(op, *grad):
   if not op.get_attr("is_training"):
-    raise ValueError(
-        "MkldnnRNN must set is_training to True to be used in gradients")
+    raise ValueError("MkldnnRNN must set is_training to True to be used in gradients")
   return gen_mkldnn_rnn_ops.mkldnn_rnn_backprop(
       input=op.inputs[0],
       input_h=op.inputs[1],

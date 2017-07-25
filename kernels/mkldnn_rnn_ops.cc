@@ -188,7 +188,7 @@ Status ExtractForwardInput(OpKernelContext* context,
     return errors::InvalidArgument("RNN input must be a 3-D vector.");
   }
 
-  // h layout: (L * dir_count) x N x num_units
+  // hx layout: (L * dir_count) x N x num_units
   model_shapes->num_layers = (*input_h)->dim_size(0) / model_shapes->dir_count;
   model_shapes->num_units = (*input_h)->dim_size(2);
 
@@ -201,7 +201,7 @@ Status ExtractForwardInput(OpKernelContext* context,
         model_shapes->hidden_state_shape.DebugString());
   }
 
-  // c layout: (L * dir_count) x N x num_units
+  // cx layout: (L * dir_count) x N x num_units
   if (model_types.HasInputC()) {
     if ((*input_h)->shape() != (*input_c)->shape()) {
       return errors::InvalidArgument(
@@ -403,7 +403,7 @@ class MkldnnRNNForwardOp<CPUDevice, T> : public MkldnnRNNKernelCommon {
                                    model_shapes.batch_size,
                                    model_shapes.input_size},
                                    a_data_type, memory::format::rnx));
-    hx_desc.reset(new memory::desc({model_shapes.num_layers,
+    hx_desc.reset(new memory::desc({model_shapes.num_layers * model_shapes.dir_count,
                                     model_shapes.batch_size,
                                     model_shapes.num_units},
                                    a_data_type, memory::format::rnx));
@@ -564,7 +564,7 @@ class MkldnnRNNBackwardOp<CPUDevice, T> : public MkldnnRNNKernelCommon {
     std::shared_ptr<memory::desc> weights_desc;
     std::shared_ptr<rnn_forward::primitive_desc> rnn_fwd_prim_desc;
     std::shared_ptr<rnn_backward::primitive_desc> rnn_bwd_prim_desc;
-    int state_outputs = 1; // for rnn_forward::desc creation
+    int state_outputs = 1;
     int wl_size;
     int wx_size;
 
@@ -583,7 +583,7 @@ class MkldnnRNNBackwardOp<CPUDevice, T> : public MkldnnRNNKernelCommon {
                                    model_shapes.batch_size,
                                    model_shapes.input_size},
                                    a_data_type, memory::format::rnx));
-    hx_desc.reset(new memory::desc({model_shapes.num_layers,
+    hx_desc.reset(new memory::desc({model_shapes.num_layers * model_shapes.dir_count,
                                     model_shapes.batch_size,
                                     model_shapes.num_units},
                                     a_data_type, memory::format::rnx));
