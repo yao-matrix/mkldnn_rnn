@@ -291,7 +291,6 @@ class MkldnnRNNParamsSizeOp<CPUDevice, T, Index> : public MkldnnRNNKernelCommon 
 
     int first_layer_weights = 0;
     int higher_layer_weights = 0;
-    int all_biases = 0;
 
     // TODO need complete logics here
     switch (rnn_mode()) {
@@ -363,8 +362,10 @@ class MkldnnRNNForwardOp<CPUDevice, T> : public MkldnnRNNKernelCommon {
       OP_REQUIRES_OK(context, context->allocate_output(2, {}, &Tcy));
     }
 
-    Tensor* dummy_reserve_space = nullptr;
-    OP_REQUIRES_OK(context, context->allocate_output(3, {}, &dummy_reserve_space));
+    Tensor* Tworkspace = nullptr;
+    if (!is_training_) {
+      OP_REQUIRES_OK(context, context->allocate_output(3, {}, &Tworkspace));
+    }
 
     // FIXME if there is workspace, need to allocate based on rnn ws desc
     std::shared_ptr<engine> eng;
@@ -381,7 +382,7 @@ class MkldnnRNNForwardOp<CPUDevice, T> : public MkldnnRNNKernelCommon {
     std::shared_ptr<memory::desc> y_desc;
     std::shared_ptr<memory::desc> weights_desc;
     std::shared_ptr<rnn_forward::primitive_desc> rnn_fwd_prim_desc;
-    int state_outputs = 1; // for rnn_forward::desc creation
+    int state_outputs = 1;
     int wl_size;
     int wx_size;
 
@@ -394,8 +395,9 @@ class MkldnnRNNForwardOp<CPUDevice, T> : public MkldnnRNNKernelCommon {
       wl_size = wl_size * 4;
       wx_size = wx_size * 4;
     }
-    const int total_w = model_shapes.num_layers == 1 ? model_shapes.dir_count * wl_size : model_shapes.dir_count
-                        * (wl_size + (model_shapes.num_layers - 1) * wx_size);
+    const int total_w = model_shapes.num_layers == 1 ? 
+                                                      model_shapes.dir_count * wl_size :
+                                                      model_shapes.dir_count * (wl_size + (model_shapes.num_layers - 1) * wx_size);
 
     x_desc.reset(new memory::desc({model_shapes.seq_length,
                                    model_shapes.batch_size,
@@ -411,13 +413,16 @@ class MkldnnRNNForwardOp<CPUDevice, T> : public MkldnnRNNKernelCommon {
                                    a_data_type, memory::format::rnx));
     weights_desc.reset(new memory::desc({total_w}, a_data_type, memory::format::x));
 
-    x.reset(new memory({ *x_desc, *eng }));
-    hx.reset(new memory({ *hx_desc, *eng }));
-    cx.reset(new memory({ *hx_desc, *eng }));
-    y.reset(new memory({ *y_desc, *eng }));
-    hy.reset(new memory({ *hx_desc, *eng }));
-    cy.reset(new memory({ *hx_desc, *eng }));
-    weights.reset(new memory({ *weights_desc, *eng }));
+    x.reset(new memory({ *x_desc, *eng }, (void*)(Tx->template flat<T>().data())));
+    hx.reset(new memory({ *hx_desc, *eng }, (void*)(Thx->template flat<T>().data())));
+    y.reset(new memory({ *y_desc, *eng }, (void*)(Ty->template flat<T>().data())));
+    hy.reset(new memory({ *hx_desc, *eng }, (void*)(Thy->template flat<T>().data())));
+    weights.reset(new memory({ *weights_desc, *eng }, (void*)(Tweights->template flat<T>().data())));
+    if (HasInputC()) {
+      cx.reset(new memory({ *hx_desc, *eng }, (void*)(Tcx->template flat<T>().data())));
+      cy.reset(new memory({ *hx_desc, *eng }, (void*)(Tcy->template flat<T>().data()))); 
+    }
+
 
     prop_kind a_prop_kind = is_training_ ? prop_kind::forward_training : prop_kind::forward_inference;
     auto rnn_fwd_desc = mkldnn::rnn_forward::desc(a_prop_kind, rnn_mode(),
@@ -429,47 +434,35 @@ class MkldnnRNNForwardOp<CPUDevice, T> : public MkldnnRNNKernelCommon {
     std::vector<primitive> pipeline;
     auto s = stream(stream::kind::lazy);
 
-    // FIXME  x/hx/weights->get_primitive_desc().get_size() should be equal to that from tensor
-
-    memcpy(x->get_data_handle(), Tx->template flat<T>().data(), Tx->template flat<T>().size() * sizeof(T));
-    memcpy(hx->get_data_handle(), Thx->template flat<T>().data(), Thx->template flat<T>().size() * sizeof(T));
-    memcpy(weights->get_data_handle(), Tweights->template flat<T>().data(), Tweights->template flat<T>().size() * sizeof(T));
-
     if (is_training_) {
       auto workspace_primitive_desc = rnn_fwd_prim_desc->workspace_primitive_desc();
-      workspace.reset(new memory(workspace_primitive_desc));
-      // TODO get workspace shape and creat output reserve space
+      int workspace_size = workspace_primitive_desc.get_size() / sizeof(T);
+      OP_REQUIRES_OK(context, context->allocate_output(3, {workspace_size}, &Tworkspace));
+      workspace.reset(new memory(workspace_primitive_desc, (void*)Tworkspace->template flat<T>().data()));
       if (HasInputC()) {
-        memcpy(cx->get_data_handle(), Tcx->template flat<T>().data(), Tcx->template flat<T>().size() * sizeof(T));
         auto l = rnn_forward(*rnn_fwd_prim_desc, x.get(), hx.get(), cx.get(),
-                 weights.get(), y.get(), hy.get(), cy.get(), workspace.get());
+                             weights.get(), y.get(), hy.get(), cy.get(), workspace.get());
         pipeline.push_back(l);
         s.submit(pipeline).wait();
-        memcpy(Tcy->template flat<T>().data(), cy->get_data_handle(), Thy->template flat<T>().size() * sizeof(T));
       } else {
         auto l = rnn_forward(*rnn_fwd_prim_desc, x.get(), hx.get(), nullptr,
-                 weights.get(), y.get(), hy.get(), nullptr, workspace.get());
+                             weights.get(), y.get(), hy.get(), nullptr, workspace.get());
         pipeline.push_back(l);
         s.submit(pipeline).wait();
       }
-      // TODO need to copy workspace to output reserve_space
     } else {
       if (HasInputC()) {
-        memcpy(cx->get_data_handle(), Tcx->template flat<T>().data(), Tcx->template flat<T>().size() * sizeof(T));
         auto l = rnn_forward(*rnn_fwd_prim_desc, x.get(), hx.get(), cx.get(),
-                 weights.get(), y.get(), hy.get(), cy.get(), nullptr);
+                             weights.get(), y.get(), hy.get(), cy.get(), nullptr);
         pipeline.push_back(l);
         s.submit(pipeline).wait();
-        memcpy(Tcy->template flat<T>().data(), cy->get_data_handle(), Thy->template flat<T>().size() * sizeof(T));
       } else {
         auto l = rnn_forward(*rnn_fwd_prim_desc, x.get(), hx.get(), nullptr,
-                 weights.get(), y.get(), hy.get(), nullptr, nullptr);
+                             weights.get(), y.get(), hy.get(), nullptr, nullptr);
         pipeline.push_back(l);
         s.submit(pipeline).wait();
       }
     }
-    memcpy(Ty->template flat<T>().data(), y->get_data_handle(), Ty->template flat<T>().size() * sizeof(T));
-    memcpy(Thy->template flat<T>().data(), hy->get_data_handle(), Thy->template flat<T>().size() * sizeof(T));
   }
 
  private:
@@ -492,18 +485,24 @@ class MkldnnRNNBackwardOp<CPUDevice, T> : public MkldnnRNNKernelCommon {
 
   void Compute(OpKernelContext* context) override {
     const Tensor* Tx = nullptr;
-    const Tensor* Th = nullptr;
-
-    const Tensor* Tc = nullptr;
+    const Tensor* Thx = nullptr;
+    const Tensor* Tcx = nullptr;
+    const Tensor* Ty = nullptr;
+    const Tensor* Tcy = nullptr;
+    const Tensor* Thy = nullptr;
     const Tensor* Tweights = nullptr;
     MkldnnModelShapes model_shapes;
     OP_REQUIRES_OK(context,
-                   ExtractForwardInput(context, model_types(), &Tx, &Th,
-                                       &Tc, &Tweights, &model_shapes));
+                   ExtractForwardInput(context, model_types(), &Tx, &Thx,
+                                       &Tcx, &Tweights, &model_shapes));
 
     // const auto& input_shape = model_shapes.input_shape;
     const auto& hidden_state_shape = model_shapes.hidden_state_shape;
     const auto& output_shape = model_shapes.output_shape;
+
+    OP_REQUIRES_OK(context, context->input("output", &Ty));
+    OP_REQUIRES_OK(context, context->input("output_c", &Tcy));
+    OP_REQUIRES_OK(context, context->input("output_h", &Thy));
 
     const Tensor* Tworkspace = nullptr;
     OP_REQUIRES_OK(context, context->input("reserve_space", &Tworkspace));
@@ -512,8 +511,8 @@ class MkldnnRNNBackwardOp<CPUDevice, T> : public MkldnnRNNKernelCommon {
     OP_REQUIRES(context, output_shape == Tdy->shape(),
                 errors::InvalidArgument(
                     "h and c must have the same shape: ",
-                    Th->shape().DebugString(), " ",
-                    Tc->shape().DebugString()));
+                    Thx->shape().DebugString(), " ",
+                    Tcx->shape().DebugString()));
     const Tensor* Tdhy = nullptr;
     OP_REQUIRES_OK(context, context->input("output_h_backprop", &Tdhy));
     OP_REQUIRES(context, Tdhy->shape() == hidden_state_shape,
@@ -531,22 +530,17 @@ class MkldnnRNNBackwardOp<CPUDevice, T> : public MkldnnRNNKernelCommon {
                                           hidden_state_shape.DebugString()));
     }
     Tensor* Tdx = nullptr;
-    OP_REQUIRES_OK(
-        context, context->allocate_output(0, Tx->shape(), &Tdx));
+    OP_REQUIRES_OK(context, context->allocate_output(0, Tx->shape(), &Tdx));
     Tensor* Tdhx = nullptr;
-    OP_REQUIRES_OK(context, context->allocate_output(1, Th->shape(),
-                                                     &Tdhx));
+    OP_REQUIRES_OK(context, context->allocate_output(1, Thx->shape(), &Tdhx));
     Tensor* Tdcx = nullptr;
     if (HasInputC()) {
-      OP_REQUIRES_OK(context, context->allocate_output(2, Tc->shape(),
-                                                       &Tdcx));
+      OP_REQUIRES_OK(context, context->allocate_output(2, Tcx->shape(), &Tdcx));
     } else {
-      OP_REQUIRES_OK(context,
-                     context->allocate_output(2, {}, &Tdcx));
+      OP_REQUIRES_OK(context, context->allocate_output(2, {}, &Tdcx));
     }
     Tensor* Tdweights = nullptr;
-    OP_REQUIRES_OK(context, context->allocate_output(3, Tweights->shape(),
-                                                     &Tdweights));
+    OP_REQUIRES_OK(context, context->allocate_output(3, Tweights->shape(), &Tdweights));
 
     std::shared_ptr<engine> eng;
     std::shared_ptr<memory> x;
@@ -583,8 +577,7 @@ class MkldnnRNNBackwardOp<CPUDevice, T> : public MkldnnRNNKernelCommon {
       wl_size = wl_size * 4;
       wx_size = wx_size * 4;
     }
-    const int total_w = model_shapes.num_layers == 1 ? model_shapes.dir_count * wl_size : model_shapes.dir_count
-                        * (wl_size + (model_shapes.num_layers - 1) * wx_size);
+    const int total_w = model_shapes.num_layers == 1 ? model_shapes.dir_count * wl_size : model_shapes.dir_count * (wl_size + (model_shapes.num_layers - 1) * wx_size);
  
     x_desc.reset(new memory::desc({model_shapes.seq_length,
                                    model_shapes.batch_size,
@@ -600,20 +593,16 @@ class MkldnnRNNBackwardOp<CPUDevice, T> : public MkldnnRNNKernelCommon {
                                    a_data_type, memory::format::rnx));
     weights_desc.reset(new memory::desc({total_w}, a_data_type, memory::format::x));
 
-    x.reset(new memory({ *x_desc, *eng }));
-    hx.reset(new memory({ *hx_desc, *eng }));
-    cx.reset(new memory({ *hx_desc, *eng }));
-    y.reset(new memory({ *y_desc, *eng }));
-    hy.reset(new memory({ *hx_desc, *eng }));
-    cy.reset(new memory({ *hx_desc, *eng }));
-    weights.reset(new memory({ *weights_desc, *eng }));
-    dx.reset(new memory({ *x_desc, *eng }));
-    dhx.reset(new memory({ *hx_desc, *eng }));
-    dcx.reset(new memory({ *hx_desc, *eng }));
-    dy.reset(new memory({ *y_desc, *eng }));
-    dhy.reset(new memory({ *hx_desc, *eng }));
-    dcy.reset(new memory({ *hx_desc, *eng }));
-    dweights.reset(new memory({ *weights_desc, *eng }));
+    x.reset(new memory({ *x_desc, *eng }, (void*)(Tx->template flat<T>().data())));
+    hx.reset(new memory({ *hx_desc, *eng }, (void*)(Thx->template flat<T>().data())));
+    y.reset(new memory({ *y_desc, *eng }, (void*)(Ty->template flat<T>().data())));
+    hy.reset(new memory({ *hx_desc, *eng }, (void*)(Thy->template flat<T>().data())));
+    weights.reset(new memory({ *weights_desc, *eng }, (void*)(Tweights->template flat<T>().data())));
+    dx.reset(new memory({ *x_desc, *eng }, (void*)(Tdx->template flat<T>().data())));
+    dhx.reset(new memory({ *hx_desc, *eng }, (void*)(Tdhx->template flat<T>().data())));
+    dy.reset(new memory({ *y_desc, *eng }, (void*)(Tdy->template flat<T>().data())));
+    dhy.reset(new memory({ *hx_desc, *eng }, (void*)(Tdhy->template flat<T>().data())));
+    dweights.reset(new memory({ *weights_desc, *eng }, (void*)(Tdweights->template flat<T>().data())));
 
     auto rnn_fwd_desc = rnn_forward::desc(prop_kind::forward_training, 
                                           static_cast<mkldnn::algorithm>(rnn_mode()),
@@ -637,27 +626,18 @@ class MkldnnRNNBackwardOp<CPUDevice, T> : public MkldnnRNNKernelCommon {
     std::vector<primitive> pipeline;
     auto s = stream(stream::kind::lazy);
     
-    // TODO x/hx/weights->get_primitive_desc().get_size() should be equal to that from tensor
-
-    memcpy(x->get_data_handle(), Tx->template flat<T>().data(), Tx->template flat<T>().size() * sizeof(T));
-    memcpy(hx->get_data_handle(), Th->template flat<T>().data(), Th->template flat<T>().size() * sizeof(T));
-    memcpy(weights->get_data_handle(), Tweights->template flat<T>().data(), Tweights->template flat<T>().size() * sizeof(T));
-    memcpy(dy->get_data_handle(), Tdy->template flat<T>().data(), Tdy->template flat<T>().size() * sizeof(T));
-    memcpy(dhy->get_data_handle(), Tdhy->template flat<T>().data(), Tdhy->template flat<T>().size() * sizeof(T));
-    memcpy(workspace->get_data_handle(), Tworkspace->template flat<T>().data(), Tworkspace->template flat<T>().size() * sizeof(T));
-
     // TODO get workspace shape and creat output reserve space
     if (HasInputC()) {
-      memcpy(cx->get_data_handle(), Tc->template flat<T>().data(), Tc->template flat<T>().size() * sizeof(T));
-      memcpy(dcy->get_data_handle(), Tdcy->template flat<T>().data(), Tdcy->template flat<T>().size() * sizeof(T));
-
+      cx.reset(new memory({ *hx_desc, *eng }, (void*)(Tcx->template flat<T>().data())));
+      cy.reset(new memory({ *hx_desc, *eng }, (void*)(Tcy->template flat<T>().data())));
+      dcx.reset(new memory({ *hx_desc, *eng }, (void*)(Tdcx->template flat<T>().data())));
+      dcy.reset(new memory({ *hx_desc, *eng }, (void*)(Tdcy->template flat<T>().data())));
+      
       auto l = rnn_backward(*rnn_bwd_prim_desc, x.get(), hx.get(), cx.get(),
-                dy.get(), dhy.get(), dcy.get(), weights.get(), workspace.get(),
-                dx.get(), dhx.get(), dcx.get(), dweights.get());
+                            dy.get(), dhy.get(), dcy.get(), weights.get(), workspace.get(),
+                            dx.get(), dhx.get(), dcx.get(), dweights.get());
       pipeline.push_back(l);
       s.submit(pipeline).wait();
-
-      memcpy(Tdcx->template flat<T>().data(), dcx->get_data_handle(), Tdcx->template flat<T>().size() * sizeof(T));
     } else {
       auto l = rnn_backward(*rnn_bwd_prim_desc, x.get(), hx.get(), nullptr,
                             dy.get(), dhy.get(), nullptr, weights.get(), workspace.get(),
@@ -665,10 +645,6 @@ class MkldnnRNNBackwardOp<CPUDevice, T> : public MkldnnRNNKernelCommon {
       pipeline.push_back(l);
       s.submit(pipeline).wait();
     }
-
-    memcpy(Tdx->template flat<T>().data(), dx->get_data_handle(), Tdx->template flat<T>().size() * sizeof(T));
-    memcpy(Tdhx->template flat<T>().data(), dhx->get_data_handle(), Tdhx->template flat<T>().size() * sizeof(T));
-    memcpy(Tdweights->template flat<T>().data(), dweights->get_data_handle(), Tweights->template flat<T>().size() * sizeof(T));
   }
 };
 

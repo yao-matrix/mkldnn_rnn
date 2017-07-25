@@ -303,8 +303,7 @@ class MkldnnRNNTest(TensorFlowTestCase):
           input_c=input_c,
           params=params)
     else:
-      output, output_h = model(
-          input_data=input_data, input_h=input_h, params=params)
+      output, output_h = model(input_data=input_data, input_h=input_h, params=params)
     output_sum = math_ops.reduce_sum(output)
     output_h_sum = math_ops.reduce_sum(output_h)
     total_sum = output_sum + output_h_sum
@@ -335,7 +334,7 @@ class MkldnnRNNTest(TensorFlowTestCase):
     test_configs = [
         {
             "rnn_mode": "lstm",
-            "dropout": [0., 0.5, 1.],
+            "dropout": [0.],
             "tolerance": 1e-2,
             "shape": {
                 "num_layers": 2,
@@ -374,13 +373,13 @@ class MkldnnRNNTest(TensorFlowTestCase):
         # },
         {
             "rnn_mode": "rnn_relu",
-            "dropout": [0., 0.5, 1.],
+            "dropout": [0.],
             "tolerance": 4e-1,
             "shape": {
-                "num_layers": 2,
+                "num_layers": 1,
                 "num_units": 3,
                 "input_size": 4,
-                "batch_size": 3,
+                "batch_size": 1,
                 "seq_length": 4,
                 "dir_count": 1,
             },
