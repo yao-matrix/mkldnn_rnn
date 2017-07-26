@@ -254,6 +254,35 @@ class MkldnnRNNKernelCommon : public OpKernel {
   MkldnnModelTypes model_types_;
 };
 
+int64 get_param_size(algorithm rnn_mode, int dir_count, int input_size, int num_units, int num_layers) {
+  int first_layer_weights = 0;
+  int higher_layer_weights = 0;
+  int64 params_size = -1;
+
+  // TODO need complete logics here
+  switch (rnn_mode) {
+    case algorithm::rnn_relu:
+    case algorithm::rnn_tanh:
+      first_layer_weights = num_units * (input_size + num_units + 2);
+      higher_layer_weights = (num_layers - 1) * num_units * (2 * num_units + 2);
+      params_size = (first_layer_weights + higher_layer_weights) * dir_count;
+      break;
+    case algorithm::rnn_lstm:
+      first_layer_weights = 4 * num_units * (input_size + num_units + 2);
+      higher_layer_weights = 4 * (num_layers - 1) * num_units * (2 * num_units + 2);
+      params_size = (first_layer_weights + higher_layer_weights) * dir_count;
+      break;
+    case algorithm::rnn_gru:
+      // TODO
+      break;
+    default:
+      LOG(WARNING) << "Invalid RNN mode: " << rnn_mode;
+      break;
+   }
+
+   return params_size;
+}
+
 // A class that returns the size of the parameter buffer. The user should
 // use that to create the actual parameter buffer for training. However, it
 // should not be used for saving and restoring.
@@ -265,7 +294,7 @@ class MkldnnRNNParamsSizeOp<CPUDevice, T, Index> : public MkldnnRNNKernelCommon 
       : MkldnnRNNKernelCommon(context) {}
 
   void Compute(OpKernelContext* context) override {
-    int64 params_size = -1;
+    Index params_size = -1;
     int dir_count = rnn_direction_mode() == direction::rnn_unidirectional ? 1 : 2;
 
     const Tensor* num_layers_t = nullptr;
@@ -289,29 +318,7 @@ class MkldnnRNNParamsSizeOp<CPUDevice, T, Index> : public MkldnnRNNKernelCommon 
     }
     int input_size = input_size_t->scalar<int>()();
 
-    int first_layer_weights = 0;
-    int higher_layer_weights = 0;
-
-    // TODO need complete logics here
-    switch (rnn_mode()) {
-      case algorithm::rnn_relu:
-      case algorithm::rnn_tanh:
-        first_layer_weights = num_units * (input_size + num_units + 2);
-        higher_layer_weights = (num_layers - 1) * num_units * (2 * num_units + 2);
-        params_size = (first_layer_weights + higher_layer_weights) * dir_count;
-        break;
-      case algorithm::rnn_lstm:
-        first_layer_weights = 4 * num_units * (input_size + num_units + 2);
-        higher_layer_weights = 4 * (num_layers - 1) * num_units * (2 * num_units + 2);
-        params_size = (first_layer_weights + higher_layer_weights) * dir_count;
-        break;
-      case algorithm::rnn_gru:
-        // TODO
-        break;
-      default:
-        LOG(WARNING) << "Invalid RNN mode: " << rnn_mode();
-        break;
-    }
+    params_size = get_param_size(rnn_mode(), dir_count, input_size, num_units, num_layers);
 
     Tensor* output_t = nullptr;
     OP_REQUIRES_OK(context, context->allocate_output(0, {1}, &output_t));
@@ -340,18 +347,19 @@ class MkldnnRNNForwardOp<CPUDevice, T> : public MkldnnRNNKernelCommon {
     const Tensor* Tweights = nullptr;
     MkldnnModelShapes model_shapes;
 
+    // LOG(ERROR) << "forward is called";
+
     OP_REQUIRES_OK(context,
                    ExtractForwardInput(context, model_types(), &Tx, &Thx,
                                        &Tcx, &Tweights, &model_shapes));
-    // const auto& input_shape = model_shapes.input_shape;
+
     const auto& hidden_state_shape = model_shapes.hidden_state_shape;
     const auto& output_shape = model_shapes.output_shape;
 
     Tensor* Ty = nullptr;
     OP_REQUIRES_OK(context, context->allocate_output(0, output_shape, &Ty));
     Tensor* Thy = nullptr;
-    OP_REQUIRES_OK(context,
-                   context->allocate_output(1, hidden_state_shape, &Thy));
+    OP_REQUIRES_OK(context, context->allocate_output(1, hidden_state_shape, &Thy));
     Tensor* Tcy = nullptr;
     if (HasInputC()) {
       // Only LSTM uses input_c and output_c. So for all other models, we only
@@ -367,8 +375,6 @@ class MkldnnRNNForwardOp<CPUDevice, T> : public MkldnnRNNKernelCommon {
       OP_REQUIRES_OK(context, context->allocate_output(3, {}, &Tworkspace));
     }
 
-    // FIXME if there is workspace, need to allocate based on rnn ws desc
-    std::shared_ptr<engine> eng;
     std::shared_ptr<memory> x;
     std::shared_ptr<memory> hx;
     std::shared_ptr<memory> cx;
@@ -383,21 +389,11 @@ class MkldnnRNNForwardOp<CPUDevice, T> : public MkldnnRNNKernelCommon {
     std::shared_ptr<memory::desc> weights_desc;
     std::shared_ptr<rnn_forward::primitive_desc> rnn_fwd_prim_desc;
     int state_outputs = 1;
-    int wl_size;
-    int wx_size;
 
     memory::data_type a_data_type = memory::data_type::f32;
-    eng.reset(new engine(engine::kind::cpu, 0));
+    std::shared_ptr<engine> eng(new engine(engine::kind::cpu, 0));
 
-    wl_size = model_shapes.num_units * (model_shapes.num_units + model_shapes.input_size + 2);
-    wx_size = model_shapes.num_units * (model_shapes.num_units + model_shapes.num_units + 2);
-    if (HasInputC()) {
-      wl_size = wl_size * 4;
-      wx_size = wx_size * 4;
-    }
-    const int total_w = model_shapes.num_layers == 1 ? 
-                                                      model_shapes.dir_count * wl_size :
-                                                      model_shapes.dir_count * (wl_size + (model_shapes.num_layers - 1) * wx_size);
+    const int total_w = get_param_size(rnn_mode(), model_shapes.dir_count, model_shapes.input_size, model_shapes.num_units, model_shapes.num_layers);
 
     x_desc.reset(new memory::desc({model_shapes.seq_length,
                                    model_shapes.batch_size,
@@ -437,6 +433,7 @@ class MkldnnRNNForwardOp<CPUDevice, T> : public MkldnnRNNKernelCommon {
     if (is_training_) {
       auto workspace_primitive_desc = rnn_fwd_prim_desc->workspace_primitive_desc();
       int workspace_size = workspace_primitive_desc.get_size() / sizeof(T);
+      // LOG(ERROR) << "fwd workspace size is: " << workspace_size;
       OP_REQUIRES_OK(context, context->allocate_output(3, {workspace_size}, &Tworkspace));
       workspace.reset(new memory(workspace_primitive_desc, (void*)Tworkspace->template flat<T>().data()));
       if (HasInputC()) {
@@ -484,6 +481,7 @@ class MkldnnRNNBackwardOp<CPUDevice, T> : public MkldnnRNNKernelCommon {
       : MkldnnRNNKernelCommon(context) {}
 
   void Compute(OpKernelContext* context) override {
+    // LOG(ERROR) << "backward is called";
     const Tensor* Tx = nullptr;
     const Tensor* Thx = nullptr;
     const Tensor* Tcx = nullptr;
@@ -542,7 +540,6 @@ class MkldnnRNNBackwardOp<CPUDevice, T> : public MkldnnRNNKernelCommon {
     Tensor* Tdweights = nullptr;
     OP_REQUIRES_OK(context, context->allocate_output(3, Tweights->shape(), &Tdweights));
 
-    std::shared_ptr<engine> eng;
     std::shared_ptr<memory> x;
     std::shared_ptr<memory> hx;
     std::shared_ptr<memory> cx;
@@ -565,19 +562,11 @@ class MkldnnRNNBackwardOp<CPUDevice, T> : public MkldnnRNNKernelCommon {
     std::shared_ptr<rnn_forward::primitive_desc> rnn_fwd_prim_desc;
     std::shared_ptr<rnn_backward::primitive_desc> rnn_bwd_prim_desc;
     int state_outputs = 1;
-    int wl_size;
-    int wx_size;
 
     memory::data_type a_data_type = memory::data_type::f32;
-    eng.reset(new engine(engine::kind::cpu, 0));
+    std::shared_ptr<engine> eng(new engine(engine::kind::cpu, 0));
 
-    wl_size = model_shapes.num_units * (model_shapes.num_units + model_shapes.input_size + 2);
-    wx_size = model_shapes.num_units * (model_shapes.num_units + model_shapes.num_units + 2);
-    if (HasInputC()) {
-      wl_size = wl_size * 4;
-      wx_size = wx_size * 4;
-    }
-    const int total_w = model_shapes.num_layers == 1 ? model_shapes.dir_count * wl_size : model_shapes.dir_count * (wl_size + (model_shapes.num_layers - 1) * wx_size);
+    const int total_w = get_param_size(rnn_mode(), model_shapes.dir_count, model_shapes.input_size, model_shapes.num_units, model_shapes.num_layers);
  
     x_desc.reset(new memory::desc({model_shapes.seq_length,
                                    model_shapes.batch_size,
@@ -622,6 +611,7 @@ class MkldnnRNNBackwardOp<CPUDevice, T> : public MkldnnRNNKernelCommon {
 
     auto workspace_primitive_desc  = rnn_fwd_prim_desc->workspace_primitive_desc();
     workspace.reset(new memory(workspace_primitive_desc, (void*)(Tworkspace->template flat<T>().data())));
+    // LOG(ERROR) << "backward workspace size is: " << workspace_primitive_desc.get_size() / sizeof(T);
 
     std::vector<primitive> pipeline;
     auto s = stream(stream::kind::lazy);
