@@ -375,57 +375,47 @@ class MkldnnRNNForwardOp<CPUDevice, T> : public MkldnnRNNKernelCommon {
       OP_REQUIRES_OK(context, context->allocate_output(3, {}, &Tworkspace));
     }
 
-    std::shared_ptr<memory> x;
-    std::shared_ptr<memory> hx;
-    std::shared_ptr<memory> cx;
-    std::shared_ptr<memory> y;
-    std::shared_ptr<memory> hy;
-    std::shared_ptr<memory> cy;
-    std::shared_ptr<memory> weights;
-    std::shared_ptr<memory> workspace;
-    std::shared_ptr<memory::desc> x_desc;
-    std::shared_ptr<memory::desc> hx_desc;
-    std::shared_ptr<memory::desc> y_desc;
-    std::shared_ptr<memory::desc> weights_desc;
-    std::shared_ptr<rnn_forward::primitive_desc> rnn_fwd_prim_desc;
+    memory *x;
+    memory *hx;
+    memory *cx;
+    memory *y;
+    memory *hy;
+    memory *cy;
+    memory *weights;
+    memory *workspace;
+    memory::desc *x_desc;
+    memory::desc *hx_desc;
+    memory::desc *y_desc;
+    memory::desc *weights_desc;
+    rnn_forward::primitive_desc *rnn_fwd_prim_desc;
     int state_outputs = 1;
 
     memory::data_type a_data_type = memory::data_type::f32;
-    std::shared_ptr<engine> eng(new engine(engine::kind::cpu, 0));
+    engine *eng = new engine(engine::kind::cpu, 0);
 
     const int total_w = get_param_size(rnn_mode(), model_shapes.dir_count, model_shapes.input_size, model_shapes.num_units, model_shapes.num_layers);
 
-    x_desc.reset(new memory::desc({model_shapes.seq_length,
-                                   model_shapes.batch_size,
-                                   model_shapes.input_size},
-                                   a_data_type, memory::format::rnx));
-    hx_desc.reset(new memory::desc({model_shapes.num_layers * model_shapes.dir_count,
-                                    model_shapes.batch_size,
-                                    model_shapes.num_units},
-                                   a_data_type, memory::format::rnx));
-    y_desc.reset(new memory::desc({model_shapes.seq_length,
-                                   model_shapes.batch_size,
-                                   model_shapes.num_units * model_shapes.dir_count},
-                                   a_data_type, memory::format::rnx));
-    weights_desc.reset(new memory::desc({total_w}, a_data_type, memory::format::x));
+    x_desc = new memory::desc({model_shapes.seq_length, model_shapes.batch_size, model_shapes.input_size}, a_data_type, memory::format::rnx);
+    hx_desc = new memory::desc({model_shapes.num_layers * model_shapes.dir_count, model_shapes.batch_size, model_shapes.num_units}, a_data_type, memory::format::rnx);
+    y_desc = new memory::desc({model_shapes.seq_length, model_shapes.batch_size, model_shapes.num_units * model_shapes.dir_count}, a_data_type, memory::format::rnx);
+    weights_desc = new memory::desc({total_w}, a_data_type, memory::format::x);
 
-    x.reset(new memory({ *x_desc, *eng }, (void*)(Tx->template flat<T>().data())));
-    hx.reset(new memory({ *hx_desc, *eng }, (void*)(Thx->template flat<T>().data())));
-    y.reset(new memory({ *y_desc, *eng }, (void*)(Ty->template flat<T>().data())));
-    hy.reset(new memory({ *hx_desc, *eng }, (void*)(Thy->template flat<T>().data())));
-    weights.reset(new memory({ *weights_desc, *eng }, (void*)(Tweights->template flat<T>().data())));
+    x = new memory({ *x_desc, *eng }, static_cast<void*>(const_cast<T*>(Tx->flat<T>().data())));
+    hx = new memory({ *hx_desc, *eng }, static_cast<void*>(const_cast<T*>(Thx->flat<T>().data())));
+    y = new memory({ *y_desc, *eng }, static_cast<void*>(const_cast<T*>(Ty->flat<T>().data())));
+    hy = new memory({ *hx_desc, *eng }, static_cast<void*>(const_cast<T*>(Thy->flat<T>().data())));
+    weights = new memory({ *weights_desc, *eng }, static_cast<void*>(const_cast<T*>(Tweights->flat<T>().data())));
     if (HasInputC()) {
-      cx.reset(new memory({ *hx_desc, *eng }, (void*)(Tcx->template flat<T>().data())));
-      cy.reset(new memory({ *hx_desc, *eng }, (void*)(Tcy->template flat<T>().data()))); 
+      cx = new memory({ *hx_desc, *eng }, static_cast<void*>(const_cast<T*>(Tcx->flat<T>().data())));
+      cy = new memory({ *hx_desc, *eng }, static_cast<void*>(const_cast<T*>(Tcy->flat<T>().data())));
     }
-
 
     prop_kind a_prop_kind = is_training_ ? prop_kind::forward_training : prop_kind::forward_inference;
     auto rnn_fwd_desc = mkldnn::rnn_forward::desc(a_prop_kind, rnn_mode(),
                                                   rnn_direction_mode(), rnn_input_mode(), model_shapes.num_units,
                                                   model_shapes.num_layers, model_shapes.seq_length,
                                                   state_outputs, *x_desc, *hx_desc, *y_desc, *weights_desc);
-    rnn_fwd_prim_desc.reset(new rnn_forward::primitive_desc(rnn_fwd_desc, *eng));
+    rnn_fwd_prim_desc = new rnn_forward::primitive_desc(rnn_fwd_desc, *eng);
 
     std::vector<primitive> pipeline;
     auto s = stream(stream::kind::lazy);
@@ -435,31 +425,47 @@ class MkldnnRNNForwardOp<CPUDevice, T> : public MkldnnRNNKernelCommon {
       int workspace_size = workspace_primitive_desc.get_size() / sizeof(T);
       // LOG(ERROR) << "fwd workspace size is: " << workspace_size;
       OP_REQUIRES_OK(context, context->allocate_output(3, {workspace_size}, &Tworkspace));
-      workspace.reset(new memory(workspace_primitive_desc, (void*)Tworkspace->template flat<T>().data()));
+      workspace = new memory(workspace_primitive_desc, static_cast<void*>(const_cast<T*>(Tworkspace->flat<T>().data())));
       if (HasInputC()) {
-        auto l = rnn_forward(*rnn_fwd_prim_desc, x.get(), hx.get(), cx.get(),
-                             weights.get(), y.get(), hy.get(), cy.get(), workspace.get());
+        auto l = rnn_forward(*rnn_fwd_prim_desc, x, hx, cx,
+                             weights, y, hy, cy, workspace);
         pipeline.push_back(l);
         s.submit(pipeline).wait();
       } else {
-        auto l = rnn_forward(*rnn_fwd_prim_desc, x.get(), hx.get(), nullptr,
-                             weights.get(), y.get(), hy.get(), nullptr, workspace.get());
+        auto l = rnn_forward(*rnn_fwd_prim_desc, x, hx, nullptr,
+                             weights, y, hy, nullptr, workspace);
         pipeline.push_back(l);
         s.submit(pipeline).wait();
       }
+      delete workspace;
     } else {
       if (HasInputC()) {
-        auto l = rnn_forward(*rnn_fwd_prim_desc, x.get(), hx.get(), cx.get(),
-                             weights.get(), y.get(), hy.get(), cy.get(), nullptr);
+        auto l = rnn_forward(*rnn_fwd_prim_desc, x, hx, cx,
+                             weights, y, hy, cy, nullptr);
         pipeline.push_back(l);
         s.submit(pipeline).wait();
       } else {
-        auto l = rnn_forward(*rnn_fwd_prim_desc, x.get(), hx.get(), nullptr,
-                             weights.get(), y.get(), hy.get(), nullptr, nullptr);
+        auto l = rnn_forward(*rnn_fwd_prim_desc, x, hx, nullptr,
+                             weights, y, hy, nullptr, nullptr);
         pipeline.push_back(l);
         s.submit(pipeline).wait();
       }
     }
+
+    if (HasInputC()) {
+      delete cx;
+      delete cy;
+    }
+    delete x;
+    delete hx;
+    delete y;
+    delete hy;
+    delete weights;
+    delete x_desc;
+    delete hx_desc;
+    delete y_desc;
+    delete weights_desc;
+    delete rnn_fwd_prim_desc;
   }
 
  private:
@@ -540,58 +546,50 @@ class MkldnnRNNBackwardOp<CPUDevice, T> : public MkldnnRNNKernelCommon {
     Tensor* Tdweights = nullptr;
     OP_REQUIRES_OK(context, context->allocate_output(3, Tweights->shape(), &Tdweights));
 
-    std::shared_ptr<memory> x;
-    std::shared_ptr<memory> hx;
-    std::shared_ptr<memory> cx;
-    std::shared_ptr<memory> y;
-    std::shared_ptr<memory> hy;
-    std::shared_ptr<memory> cy;
-    std::shared_ptr<memory> dy;
-    std::shared_ptr<memory> dhy;
-    std::shared_ptr<memory> dcy;
-    std::shared_ptr<memory> dx;
-    std::shared_ptr<memory> dhx;
-    std::shared_ptr<memory> dcx;
-    std::shared_ptr<memory> weights;
-    std::shared_ptr<memory> workspace;
-    std::shared_ptr<memory> dweights;
-    std::shared_ptr<memory::desc> x_desc;
-    std::shared_ptr<memory::desc> hx_desc;
-    std::shared_ptr<memory::desc> y_desc;
-    std::shared_ptr<memory::desc> weights_desc;
-    std::shared_ptr<rnn_forward::primitive_desc> rnn_fwd_prim_desc;
-    std::shared_ptr<rnn_backward::primitive_desc> rnn_bwd_prim_desc;
+    memory *x;
+    memory *hx;
+    memory *cx;
+    memory *y;
+    memory *hy;
+    memory *cy;
+    memory *dy;
+    memory *dhy;
+    memory *dcy;
+    memory *dx;
+    memory *dhx;
+    memory *dcx;
+    memory *weights;
+    memory *workspace;
+    memory *dweights;
+    memory::desc *x_desc;
+    memory::desc *hx_desc;
+    memory::desc *y_desc;
+    memory::desc *weights_desc;
+    rnn_forward::primitive_desc *rnn_fwd_prim_desc;
+    rnn_backward::primitive_desc *rnn_bwd_prim_desc;
+
     int state_outputs = 1;
 
     memory::data_type a_data_type = memory::data_type::f32;
-    std::shared_ptr<engine> eng(new engine(engine::kind::cpu, 0));
+    engine *eng = new engine(engine::kind::cpu, 0);
 
     const int total_w = get_param_size(rnn_mode(), model_shapes.dir_count, model_shapes.input_size, model_shapes.num_units, model_shapes.num_layers);
  
-    x_desc.reset(new memory::desc({model_shapes.seq_length,
-                                   model_shapes.batch_size,
-                                   model_shapes.input_size},
-                                   a_data_type, memory::format::rnx));
-    hx_desc.reset(new memory::desc({model_shapes.num_layers * model_shapes.dir_count,
-                                    model_shapes.batch_size,
-                                    model_shapes.num_units},
-                                    a_data_type, memory::format::rnx));
-    y_desc.reset(new memory::desc({model_shapes.seq_length,
-                                   model_shapes.batch_size,
-                                   model_shapes.num_units * model_shapes.dir_count},
-                                   a_data_type, memory::format::rnx));
-    weights_desc.reset(new memory::desc({total_w}, a_data_type, memory::format::x));
+    x_desc = new memory::desc({model_shapes.seq_length, model_shapes.batch_size, model_shapes.input_size}, a_data_type, memory::format::rnx);
+    hx_desc = new memory::desc({model_shapes.num_layers * model_shapes.dir_count, model_shapes.batch_size, model_shapes.num_units}, a_data_type, memory::format::rnx);
+    y_desc = new memory::desc({model_shapes.seq_length, model_shapes.batch_size, model_shapes.num_units * model_shapes.dir_count}, a_data_type, memory::format::rnx);
+    weights_desc = new memory::desc({total_w}, a_data_type, memory::format::x);
 
-    x.reset(new memory({ *x_desc, *eng }, (void*)(Tx->template flat<T>().data())));
-    hx.reset(new memory({ *hx_desc, *eng }, (void*)(Thx->template flat<T>().data())));
-    y.reset(new memory({ *y_desc, *eng }, (void*)(Ty->template flat<T>().data())));
-    hy.reset(new memory({ *hx_desc, *eng }, (void*)(Thy->template flat<T>().data())));
-    weights.reset(new memory({ *weights_desc, *eng }, (void*)(Tweights->template flat<T>().data())));
-    dx.reset(new memory({ *x_desc, *eng }, (void*)(Tdx->template flat<T>().data())));
-    dhx.reset(new memory({ *hx_desc, *eng }, (void*)(Tdhx->template flat<T>().data())));
-    dy.reset(new memory({ *y_desc, *eng }, (void*)(Tdy->template flat<T>().data())));
-    dhy.reset(new memory({ *hx_desc, *eng }, (void*)(Tdhy->template flat<T>().data())));
-    dweights.reset(new memory({ *weights_desc, *eng }, (void*)(Tdweights->template flat<T>().data())));
+    x = new memory({ *x_desc, *eng }, (void*)(Tx->template flat<T>().data()));
+    hx = new memory({ *hx_desc, *eng }, (void*)(Thx->template flat<T>().data()));
+    y = new memory({ *y_desc, *eng }, (void*)(Ty->template flat<T>().data()));
+    hy = new memory({ *hx_desc, *eng }, (void*)(Thy->template flat<T>().data()));
+    weights = new memory({ *weights_desc, *eng }, (void*)(Tweights->template flat<T>().data()));
+    dx = new memory({ *x_desc, *eng }, (void*)(Tdx->template flat<T>().data()));
+    dhx = new memory({ *hx_desc, *eng }, (void*)(Tdhx->template flat<T>().data()));
+    dy = new memory({ *y_desc, *eng }, (void*)(Tdy->template flat<T>().data()));
+    dhy = new memory({ *hx_desc, *eng }, (void*)(Tdhy->template flat<T>().data()));
+    dweights = new memory({ *weights_desc, *eng }, (void*)(Tdweights->template flat<T>().data()));
 
     auto rnn_fwd_desc = rnn_forward::desc(prop_kind::forward_training, 
                                           static_cast<mkldnn::algorithm>(rnn_mode()),
@@ -599,42 +597,65 @@ class MkldnnRNNBackwardOp<CPUDevice, T> : public MkldnnRNNKernelCommon {
                                           static_cast<mkldnn::input_mode>(rnn_input_mode()),
                                           model_shapes.num_units, model_shapes.num_layers, model_shapes.seq_length,
                                           state_outputs, *x_desc, *hx_desc, *y_desc, *weights_desc);
-    rnn_fwd_prim_desc.reset(new rnn_forward::primitive_desc(rnn_fwd_desc, *eng));
+    rnn_fwd_prim_desc = new rnn_forward::primitive_desc(rnn_fwd_desc, *eng);
 
-    auto rnn_bwd_desc = rnn_backward::desc(prop_kind::backward, 
+    auto rnn_bwd_desc = rnn_backward::desc(prop_kind::backward,
                                            static_cast<mkldnn::algorithm>(rnn_mode()),
                                            static_cast<mkldnn::direction>(rnn_direction_mode()),
                                            static_cast<mkldnn::input_mode>(rnn_input_mode()),
                                            model_shapes.num_units, model_shapes.num_layers, model_shapes.seq_length,
                                            state_outputs, *x_desc, *hx_desc, *y_desc, *weights_desc);
-    rnn_bwd_prim_desc.reset(new rnn_backward::primitive_desc(rnn_bwd_desc, *eng, *rnn_fwd_prim_desc));
+    rnn_bwd_prim_desc = new rnn_backward::primitive_desc(rnn_bwd_desc, *eng, *rnn_fwd_prim_desc);
 
     auto workspace_primitive_desc  = rnn_fwd_prim_desc->workspace_primitive_desc();
-    workspace.reset(new memory(workspace_primitive_desc, (void*)(Tworkspace->template flat<T>().data())));
+    workspace = new memory(workspace_primitive_desc, (void*)(Tworkspace->template flat<T>().data()));
     // LOG(ERROR) << "backward workspace size is: " << workspace_primitive_desc.get_size() / sizeof(T);
 
     std::vector<primitive> pipeline;
     auto s = stream(stream::kind::lazy);
-    
+
     // TODO get workspace shape and creat output reserve space
     if (HasInputC()) {
-      cx.reset(new memory({ *hx_desc, *eng }, (void*)(Tcx->template flat<T>().data())));
-      cy.reset(new memory({ *hx_desc, *eng }, (void*)(Tcy->template flat<T>().data())));
-      dcx.reset(new memory({ *hx_desc, *eng }, (void*)(Tdcx->template flat<T>().data())));
-      dcy.reset(new memory({ *hx_desc, *eng }, (void*)(Tdcy->template flat<T>().data())));
-      
-      auto l = rnn_backward(*rnn_bwd_prim_desc, x.get(), hx.get(), cx.get(),
-                            dy.get(), dhy.get(), dcy.get(), weights.get(), workspace.get(),
-                            dx.get(), dhx.get(), dcx.get(), dweights.get());
+      cx = new memory({ *hx_desc, *eng }, (void*)(Tcx->template flat<T>().data()));
+      cy = new memory({ *hx_desc, *eng }, (void*)(Tcy->template flat<T>().data()));
+      dcx = new memory({ *hx_desc, *eng }, (void*)(Tdcx->template flat<T>().data()));
+      dcy = new memory({ *hx_desc, *eng }, (void*)(Tdcy->template flat<T>().data()));
+
+      auto l = rnn_backward(*rnn_bwd_prim_desc, x, hx, cx,
+                            dy, dhy, dcy, weights, workspace,
+                            dx, dhx, dcx, dweights);
       pipeline.push_back(l);
       s.submit(pipeline).wait();
+
+      delete cx;
+      delete cy;
+      delete dcx;
+      delete dcy;
     } else {
-      auto l = rnn_backward(*rnn_bwd_prim_desc, x.get(), hx.get(), nullptr,
-                            dy.get(), dhy.get(), nullptr, weights.get(), workspace.get(),
-                            dx.get(), dhx.get(), nullptr, dweights.get());
+      auto l = rnn_backward(*rnn_bwd_prim_desc, x, hx, nullptr,
+                            dy, dhy, nullptr, weights, workspace,
+                            dx, dhx, nullptr, dweights);
       pipeline.push_back(l);
       s.submit(pipeline).wait();
     }
+
+    delete x;
+    delete hx;
+    delete y;
+    delete hy;
+    delete dy;
+    delete dhy;
+    delete dx;
+    delete dhx;
+    delete weights;
+    delete workspace;
+    delete dweights;
+    delete x_desc;
+    delete hx_desc;
+    delete y_desc;
+    delete weights_desc;
+    delete rnn_fwd_prim_desc;
+    delete rnn_bwd_prim_desc;
   }
 };
 
