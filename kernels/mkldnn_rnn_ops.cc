@@ -81,7 +81,7 @@ using mkldnn::rnn_forward;
 using mkldnn::rnn_backward;
 using mkldnn::primitive;
 
-#define OP_DATA_DUMP
+// #define OP_DATA_DUMP
 
 #ifdef OP_DATA_DUMP
 template <typename T>
@@ -275,21 +275,22 @@ int64 get_param_size(algorithm rnn_mode, int dir_count, int input_size, int num_
   int higher_layer_weights = 0;
   int64 params_size = -1;
 
-  // TODO need complete logics here
   switch (rnn_mode) {
     case algorithm::rnn_relu:
     case algorithm::rnn_tanh:
       first_layer_weights = num_units * (input_size + num_units + 2);
-      higher_layer_weights = (num_layers - 1) * num_units * (2 * num_units + 2);
+      higher_layer_weights = (num_layers - 1) * num_units * (num_units + num_units + 2);
       params_size = (first_layer_weights + higher_layer_weights) * dir_count;
       break;
     case algorithm::rnn_lstm:
       first_layer_weights = 4 * num_units * (input_size + num_units + 2);
-      higher_layer_weights = 4 * (num_layers - 1) * num_units * (2 * num_units + 2);
+      higher_layer_weights = 4 * (num_layers - 1) * num_units * (num_units + num_units + 2);
       params_size = (first_layer_weights + higher_layer_weights) * dir_count;
       break;
     case algorithm::rnn_gru:
-      // TODO
+      first_layer_weights = 3 * num_units * (input_size + num_units + 2);
+      higher_layer_weights = 3 * (num_layers - 1) * num_units * (num_units + num_units + 2);
+      params_size = (first_layer_weights + higher_layer_weights) * dir_count;
       break;
     default:
       LOG(WARNING) << "Invalid RNN mode: " << rnn_mode;
@@ -633,6 +634,9 @@ class MkldnnRNNBackwardOp<CPUDevice, T> : public MkldnnRNNKernelCommon {
     hx_desc = new memory::desc({model_shapes.num_layers * model_shapes.dir_count, model_shapes.batch_size, model_shapes.num_units}, a_data_type, memory::format::rnx);
     y_desc = new memory::desc({model_shapes.seq_length, model_shapes.batch_size, model_shapes.num_units * model_shapes.dir_count}, a_data_type, memory::format::rnx);
     weights_desc = new memory::desc({total_w}, a_data_type, memory::format::x);
+
+    // clear dweights
+    memset(static_cast<void*>(const_cast<T*>(Tdweights->flat<T>().data())), 0, Tweights->NumElements() * sizeof(T));
 
     x = new memory({ *x_desc, *eng }, static_cast<void*>(const_cast<T*>(Tx->flat<T>().data())));
     hx = new memory({ *hx_desc, *eng }, static_cast<void*>(const_cast<T*>(Thx->flat<T>().data())));
