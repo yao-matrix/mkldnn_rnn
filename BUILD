@@ -1,5 +1,5 @@
 # Description:
-#   A Cudnn RNN wrapper.
+#   A Mkldnn RNN wrapper.
 #   APIs are meant to change over time.
 package(
     default_visibility = ["//visibility:private"],
@@ -20,7 +20,7 @@ load("//tensorflow:tensorflow.bzl", "tf_py_test")
 cc_library(
     name = "mkldnn_binary_blob",
     srcs = [
-        "mkl-dnn/lib/libmkldnn.so",
+        "mkl-dnn/lib/libmkldnn.so.0",
     ],
     includes = ["mkl-dnn/include/."],
     visibility = ["//visibility:public"],

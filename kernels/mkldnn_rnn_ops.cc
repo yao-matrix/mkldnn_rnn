@@ -50,7 +50,7 @@ limitations under the License.
 
 /*
  * This module implements ops that fuse a multi-layer multi-step RNN/LSTM model
- * using the underlying Cudnn library.
+ * using the underlying Mkldnn library.
  *
  * Similar to many other ops, the forward op has two flavors: training and
  * inference. When training is specified, additional data in reserve_space will
