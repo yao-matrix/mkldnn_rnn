@@ -188,33 +188,43 @@ Status ExtractForwardInput(OpKernelContext* context,
   }
   TF_RETURN_IF_ERROR(context->input("params", params));
 
-  if ((*input)->dims() != 3) {
-    return errors::InvalidArgument("RNN input must be a 3-D vector.");
-  }
-
   // input layout: T x N x F
-  model_shapes->seq_length = (*input)->dim_size(0);
-  model_shapes->batch_size = (*input)->dim_size(1);
-  model_shapes->input_size = (*input)->dim_size(2);
-  model_shapes->input_shape = (*input)->shape();
-  model_shapes->dir_count = (model_types.rnn_direction_mode == direction::rnn_bidirectional) ? 2 : 1;
-  // LOG(ERROR) << "input size: " << (*input)->dim_size(0) << ", " << (*input)->dim_size(1) << ", " << (*input)->dim_size(2);
-
-  if ((*input_h)->dims() != 3) {
-    return errors::InvalidArgument("RNN input must be a 3-D vector.");
+  #if 0
+  LOG(ERROR) << "input dims: " << (*input)->dims();
+  for (int i = 0; i < (*input)->dims(); i++) {
+    LOG(ERROR) << (*input)->dim_size(i) << ", ";
+  } 
+  #endif
+  if ((*input)->dims() == 2) {
+    model_shapes->seq_length = 1;
+    model_shapes->batch_size = (*input)->dim_size(0);
+    model_shapes->input_size = (*input)->dim_size(1);
+    model_shapes->input_shape = TensorShape({1, model_shapes->batch_size, model_shapes->input_size});
+  } else {
+    model_shapes->seq_length = (*input)->dim_size(0);
+    model_shapes->batch_size = (*input)->dim_size(1);
+    model_shapes->input_size = (*input)->dim_size(2);
+    model_shapes->input_shape = (*input)->shape();
   }
+
+  model_shapes->dir_count = (model_types.rnn_direction_mode == direction::rnn_bidirectional) ? 2 : 1;
 
   // hx layout: (L * dir_count) x N x num_units
-  model_shapes->num_layers = (*input_h)->dim_size(0) / model_shapes->dir_count;
-  model_shapes->num_units = (*input_h)->dim_size(2);
-
-  model_shapes->hidden_state_shape =
-      TensorShape({model_shapes->dir_count * model_shapes->num_layers,
-                   model_shapes->batch_size, model_shapes->num_units});
-  if ((*input_h)->shape() != model_shapes->hidden_state_shape) {
-    return errors::InvalidArgument(
-        "Invalid input_h shape: ", (*input_h)->shape().DebugString(), " ",
-        model_shapes->hidden_state_shape.DebugString());
+  #if 0
+  LOG(ERROR) << "input_h dims: " << (*input_h)->dims();
+  for (int i = 0; i < (*input_h)->dims(); i++) {
+    LOG(ERROR) << (*input_h)->dim_size(i) << ", ";
+  }
+  #endif
+  if ((*input_h)->dims() == 2) {
+    model_shapes->num_layers = 1;
+    model_shapes->num_units = (*input_h)->dim_size(1); 
+    model_shapes->hidden_state_shape = TensorShape({model_shapes->batch_size, model_shapes->num_units});
+  } else {
+    model_shapes->num_layers = (*input_h)->dim_size(0) / model_shapes->dir_count;
+    model_shapes->num_units = (*input_h)->dim_size(2);
+    model_shapes->hidden_state_shape = TensorShape({model_shapes->dir_count * model_shapes->num_layers,
+                                                    model_shapes->batch_size, model_shapes->num_units});
   }
 
   // cx layout: (L * dir_count) x N x num_units
@@ -228,9 +238,13 @@ Status ExtractForwardInput(OpKernelContext* context,
   }
 
   // output layout: T x N x (dir_count * num_units)
-  model_shapes->output_shape =
-      TensorShape({model_shapes->seq_length, model_shapes->batch_size,
-                   model_shapes->dir_count * model_shapes->num_units});
+  if ((*input)->dims() == 2) {
+    model_shapes->output_shape = TensorShape({model_shapes->batch_size,
+                                              model_shapes->dir_count * model_shapes->num_units});
+  } else {
+    model_shapes->output_shape = TensorShape({model_shapes->seq_length, model_shapes->batch_size,
+                                              model_shapes->dir_count * model_shapes->num_units});
+  }
   return Status::OK();
 }
 

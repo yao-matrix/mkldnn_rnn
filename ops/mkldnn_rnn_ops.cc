@@ -119,20 +119,30 @@ REGISTER_OP("MkldnnRNN")
     .SetShapeFn([](InferenceContext* c) {
       auto input_shape = c->input(0);
       auto input_h_shape = c->input(1);
-      auto seq_length = c->Dim(input_shape, 0);
-      auto batch_size = c->Dim(input_shape, 1);
-      auto num_units = c->Dim(input_h_shape, 2);
       string direction;
       TF_RETURN_IF_ERROR(c->GetAttr("direction", &direction));
       string rnn_mode;
       TF_RETURN_IF_ERROR(c->GetAttr("rnn_mode", &rnn_mode));
-      int dir_count = (direction == "bidirectional") ? 2 : 1;
-      DimensionHandle output_size;
-      TF_RETURN_IF_ERROR(c->Multiply(num_units, dir_count, &output_size));
-      auto output_shape = c->MakeShape({seq_length, batch_size, output_size});
+      int dir_count = (direction == "bidirectional") ? 2 : 1; 
+      if (c->Rank(input_shape) == 3) {
+        auto seq_length = c->Dim(input_shape, 0);
+        auto batch_size = c->Dim(input_shape, 1);
+        auto num_units = c->Dim(input_h_shape, 2);
+        DimensionHandle output_size;
+        TF_RETURN_IF_ERROR(c->Multiply(num_units, dir_count, &output_size));
+        auto output_shape = c->MakeShape({seq_length, batch_size, output_size});
+        c->set_output(0, output_shape);
+      } else {
+        auto seq_length = 1;
+        auto batch_size = c->Dim(input_shape, 0);
+        auto num_units = c->Dim(input_h_shape, 1);
+        DimensionHandle output_size;
+        TF_RETURN_IF_ERROR(c->Multiply(num_units, dir_count, &output_size)); 
+        auto output_shape = c->MakeShape({batch_size, output_size});
+        c->set_output(0, output_shape);
+      }
       auto output_h_shape = input_h_shape;
       auto output_c_shape TF_ATTRIBUTE_UNUSED = (rnn_mode == "lstm") ? output_h_shape : c->MakeShape({});
-      c->set_output(0, output_shape);
       c->set_output(1, output_h_shape);
       c->set_output(2, output_c_shape);
       c->set_output(3, c->UnknownShape());
