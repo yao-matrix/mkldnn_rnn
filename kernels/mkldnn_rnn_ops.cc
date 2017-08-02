@@ -522,9 +522,6 @@ class MkldnnRNNBackwardOp<CPUDevice, T> : public MkldnnRNNKernelCommon {
     const Tensor* Tx = nullptr;
     const Tensor* Thx = nullptr;
     const Tensor* Tcx = nullptr;
-    const Tensor* Ty = nullptr;
-    const Tensor* Tcy = nullptr;
-    const Tensor* Thy = nullptr;
     const Tensor* Tweights = nullptr;
     MkldnnModelShapes model_shapes;
     OP_REQUIRES_OK(context,
@@ -534,10 +531,6 @@ class MkldnnRNNBackwardOp<CPUDevice, T> : public MkldnnRNNKernelCommon {
     // const auto& input_shape = model_shapes.input_shape;
     const auto& hidden_state_shape = model_shapes.hidden_state_shape;
     const auto& output_shape = model_shapes.output_shape;
-
-    OP_REQUIRES_OK(context, context->input("output", &Ty));
-    OP_REQUIRES_OK(context, context->input("output_c", &Tcy));
-    OP_REQUIRES_OK(context, context->input("output_h", &Thy));
 
     const Tensor* Tworkspace = nullptr;
     OP_REQUIRES_OK(context, context->input("reserve_space", &Tworkspace));
@@ -618,9 +611,6 @@ class MkldnnRNNBackwardOp<CPUDevice, T> : public MkldnnRNNKernelCommon {
     memory *x;
     memory *hx;
     memory *cx;
-    memory *y;
-    memory *hy;
-    memory *cy;
     memory *dy;
     memory *dhy;
     memory *dcy;
@@ -654,8 +644,6 @@ class MkldnnRNNBackwardOp<CPUDevice, T> : public MkldnnRNNKernelCommon {
 
     x = new memory({ *x_desc, *eng }, static_cast<void*>(const_cast<T*>(Tx->flat<T>().data())));
     hx = new memory({ *hx_desc, *eng }, static_cast<void*>(const_cast<T*>(Thx->flat<T>().data())));
-    y = new memory({ *y_desc, *eng }, static_cast<void*>(const_cast<T*>(Ty->flat<T>().data())));
-    hy = new memory({ *hx_desc, *eng }, static_cast<void*>(const_cast<T*>(Thy->flat<T>().data())));
     weights = new memory({ *weights_desc, *eng }, static_cast<void*>(const_cast<T*>(Tweights->flat<T>().data())));
     dx = new memory({ *x_desc, *eng }, static_cast<void*>(const_cast<T*>(Tdx->flat<T>().data())));
     dhx = new memory({ *hx_desc, *eng }, static_cast<void*>(const_cast<T*>(Tdhx->flat<T>().data())));
@@ -689,7 +677,6 @@ class MkldnnRNNBackwardOp<CPUDevice, T> : public MkldnnRNNKernelCommon {
     // TODO get workspace shape and creat output reserve space
     if (HasInputC()) {
       cx = new memory({ *hx_desc, *eng }, static_cast<void*>(const_cast<T*>(Tcx->flat<T>().data())));
-      cy = new memory({ *hx_desc, *eng }, static_cast<void*>(const_cast<T*>(Tcy->flat<T>().data())));
       dcx = new memory({ *hx_desc, *eng }, static_cast<void*>(const_cast<T*>(Tdcx->flat<T>().data())));
       dcy = new memory({ *hx_desc, *eng }, static_cast<void*>(const_cast<T*>(Tdcy->flat<T>().data())));
 
@@ -760,15 +747,12 @@ class MkldnnRNNBackwardOp<CPUDevice, T> : public MkldnnRNNKernelCommon {
 
     if (HasInputC()) {
       delete cx;
-      delete cy;
       delete dcx;
       delete dcy;
     }
 
     delete x;
     delete hx;
-    delete y;
-    delete hy;
     delete dy;
     delete dhy;
     delete dx;

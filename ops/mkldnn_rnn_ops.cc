@@ -133,7 +133,6 @@ REGISTER_OP("MkldnnRNN")
         auto output_shape = c->MakeShape({seq_length, batch_size, output_size});
         c->set_output(0, output_shape);
       } else {
-        auto seq_length = 1;
         auto batch_size = c->Dim(input_shape, 0);
         auto num_units = c->Dim(input_h_shape, 1);
         DimensionHandle output_size;
@@ -164,9 +163,6 @@ REGISTER_OP("MkldnnRNNBackprop")
     .Input("input_h: T")
     .Input("input_c: T")
     .Input("params: T")
-    .Input("output: T")
-    .Input("output_h: T")
-    .Input("output_c: T")
     .Input("output_backprop: T")
     .Input("output_h_backprop: T")
     .Input("output_c_backprop: T")
@@ -196,7 +192,12 @@ REGISTER_OP("MkldnnRNNBackprop")
     })
     .Doc(strings::StrCat(R"doc(
 Compute the backprop of both data and weights in a RNN.
-)doc", kMkldnnRNNCommonAttrs, kMkldnnRNNForwardTensors(), R"doc(
+)doc", kMkldnnRNNCommonAttrs, R"doc(
+input: a 3-D tensor with the shape of [seq_length, batch_size, input_size].
+input_h: a 3-D tensor with the shape of [num_layer * dir, batch_size, num_units].
+input_c: For LSTM, a 3-D tensor with the shape of
+         [num_layer * dir, batch_size, num_units]. For other models, it is ignored.
+params: a 1-D tensor that contains the weights and biases in an opaque layout.
 output_backprop: A 3-D tensor with the same shape as output in the forward pass.
 output_h_backprop: A 3-D tensor with the same shape as output_h in the forward
     pass.
