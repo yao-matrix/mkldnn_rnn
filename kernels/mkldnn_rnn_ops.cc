@@ -427,7 +427,7 @@ class MkldnnRNNForwardOp<CPUDevice, T> : public MkldnnRNNKernelCommon {
     const int total_w = get_param_size(rnn_mode(), model_shapes.dir_count, model_shapes.input_size, model_shapes.num_units, model_shapes.num_layers);
 
     x_desc = new memory::desc({model_shapes.seq_length, model_shapes.batch_size, model_shapes.input_size}, a_data_type, memory::format::rnx);
-    hx_desc = new memory::desc({model_shapes.num_layers * model_shapes.dir_count, model_shapes.batch_size, model_shapes.num_units}, a_data_type, memory::format::rnx);
+    hx_desc = new memory::desc({model_shapes.num_layers, model_shapes.batch_size, model_shapes.num_units}, a_data_type, memory::format::rnx);
     y_desc = new memory::desc({model_shapes.seq_length, model_shapes.batch_size, model_shapes.num_units * model_shapes.dir_count}, a_data_type, memory::format::rnx);
     weights_desc = new memory::desc({total_w}, a_data_type, memory::format::x);
 
@@ -442,6 +442,7 @@ class MkldnnRNNForwardOp<CPUDevice, T> : public MkldnnRNNKernelCommon {
     }
 
     prop_kind a_prop_kind = is_training_ ? prop_kind::forward_training : prop_kind::forward_inference;
+
     auto rnn_fwd_desc = mkldnn::rnn_forward::desc(a_prop_kind, rnn_mode(),
                                                   rnn_direction_mode(), rnn_input_mode(), model_shapes.num_units,
                                                   model_shapes.num_layers, model_shapes.seq_length,
